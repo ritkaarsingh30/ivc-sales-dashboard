@@ -1,0 +1,6 @@
+IVC
+.venv
+venv
+.env
+frontend/node_modules
+__pycache__
