@@ -6,6 +6,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from constants import FCFA_TO_EUR, DISTRIBUTORS
 from name_map import product_display_name, mr_display_name, MR_CANONICAL
+from cache.redis_client import get_api_cache, set_api_cache
 
 router = APIRouter()
 
@@ -24,9 +25,14 @@ def _get_data():
 
 
 @router.get("/months/{month}")
-def get_month(month: str):
+async def get_month(month: str):
     if month not in VALID_MONTHS:
         raise HTTPException(status_code=404, detail=f"Month '{month}' not found. Use jan/feb/mar.")
+
+    cache_key = f"months:{month}"
+    cached = await get_api_cache(cache_key)
+    if cached:
+        return cached
 
     data = _get_data()
     d = data.get(month, {})
@@ -187,7 +193,7 @@ def get_month(month: str):
             call_breakdown["non_prescriber"].append(int(row.get("NonPrescriber", 0) or 0))
             call_breakdown["pharmacy"].append(int(row.get("PharmacyCalls", 0) or 0))
 
-    return safe_json({
+    result = safe_json({
         "month": month,
         "kpis": kpis,
         "target_vs_achieved": target_vs_achieved,
@@ -197,3 +203,5 @@ def get_month(month: str):
         "activity_expenses": activity_expenses,
         "call_breakdown": call_breakdown,
     })
+    await set_api_cache(cache_key, result)
+    return result

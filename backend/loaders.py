@@ -6,6 +6,8 @@ Adapted from the Streamlit version — no st.cache_data, no streamlit imports.
 import re
 import pandas as pd
 from io import BytesIO
+import warnings
+import logging
 
 from constants import DISTRIBUTORS, FCFA_TO_EUR
 from utils import safe_num
@@ -17,6 +19,35 @@ from name_map import (
     normalize_doctor,
     build_doctor_index,
 )
+
+logger = logging.getLogger(__name__)
+
+def _parse_visit_date(series: pd.Series) -> pd.Series:
+    formats = [
+        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", 
+        "%d/%m/%y", "%d-%b-%y", "%d-%b-%Y", "%d %b %Y"
+    ]
+    result = pd.Series(pd.NaT, index=series.index)
+    unparsed_mask = series.notna() & (series != "")
+
+    for fmt in formats:
+        if not unparsed_mask.any():
+            break
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            parsed = pd.to_datetime(series[unparsed_mask], format=fmt, errors="coerce")
+        mask_success = parsed.notna()
+        result.update(parsed[mask_success])
+        unparsed_mask &= ~mask_success
+
+    if unparsed_mask.any():
+        logger.info(f"[loaders] Falling back to dayfirst=True for {unparsed_mask.sum()} dates")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            parsed_fallback = pd.to_datetime(series[unparsed_mask], errors="coerce", dayfirst=True)
+        result.update(parsed_fallback)
+
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -418,16 +449,21 @@ def load_monthly_reports(file_bytes: bytes = None, df: pd.DataFrame = None,
     # ── DELEGATES REPORTS ──
 
     del_df = None
-    if raw_d is not None:
+    if raw_d is not None and not raw_d.empty:
         del_rows = []
         for i, row in raw_d.iterrows():
             if i < 3:
                 continue
-            sn = row.iloc[0]
-            if not isinstance(sn, (int, float)) or pd.isna(sn):
+            sn_raw = row.iloc[0]
+            # gspread returns all values as strings — coerce to numeric
+            try:
+                sn = float(str(sn_raw).strip())
+            except (ValueError, TypeError):
+                continue
+            if pd.isna(sn):
                 continue
             delegate = str(row.iloc[1]).strip()
-            if any(k in delegate.upper() for k in ("TOTAL", "TARGET")):
+            if not delegate or any(k in delegate.upper() for k in ("TOTAL", "TARGET")):
                 continue
             del_rows.append({
                 "SN": int(sn),
@@ -448,14 +484,20 @@ def load_monthly_reports(file_bytes: bytes = None, df: pd.DataFrame = None,
 
     # ── BUDGET ANALYSIS ──
     ba_df = None
-    if raw_b is not None:
+    if raw_b is not None and not raw_b.empty:
         ba_rows = []
         for i, row in raw_b.iterrows():
             if i < 2:
                 continue
             doctor = str(row.iloc[0]).strip()
-            if not doctor or doctor.upper() in ("NAN", "DR. NAME"):
+            if not doctor or doctor.upper() in ("NAN", "DR. NAME", ""):
                 continue
+            # Skip rows where col0 is purely numeric (malformed row)
+            try:
+                float(doctor)
+                continue  # it's a number, not a doctor name
+            except ValueError:
+                pass
             ba_rows.append({
                 "Doctor": normalize_doctor(doctor),
                 "Area": normalize_territory(str(row.iloc[1]).strip()),
@@ -502,7 +544,7 @@ def load_visit_tracker(files_and_months: list = None,
             header_row = raw.iloc[3]
             candidate_visit_cols = [c for c in raw.columns if "visit" in str(header_row[c]).lower()]
             for vc in candidate_visit_cols:
-                raw[vc] = pd.to_datetime(raw[vc], errors="coerce")
+                raw[vc] = _parse_visit_date(raw[vc])
             visit_cols = [c for c in candidate_visit_cols if raw[vc].notna().any()]
 
             doc_col = next(
@@ -563,7 +605,7 @@ def load_visit_tracker(files_and_months: list = None,
             header_row = raw.iloc[3]
             candidate_visit_cols = [c for c in raw.columns if "visit" in str(header_row[c]).lower()]
             for vc in candidate_visit_cols:
-                raw[vc] = pd.to_datetime(raw[vc], errors="coerce")
+                raw[vc] = _parse_visit_date(raw[vc])
             visit_cols = [c for c in candidate_visit_cols if raw[c].notna().any()]
 
             doc_col = next(

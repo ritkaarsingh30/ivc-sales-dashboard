@@ -6,6 +6,7 @@ import numpy as np
 from fastapi import APIRouter
 from constants import FCFA_TO_EUR, DISTRIBUTORS
 from name_map import product_display_name, product_category, MR_CANONICAL
+from cache.redis_client import get_api_cache, set_api_cache
 
 router = APIRouter()
 
@@ -73,7 +74,11 @@ def _month_projection(proj_dict):
 
 
 @router.get("/overview")
-def get_overview():
+async def get_overview():
+    cached = await get_api_cache("overview")
+    if cached:
+        return cached
+
     data = _get_data()
 
     month_labels = {"jan": "January", "feb": "February", "mar": "March"}
@@ -192,9 +197,11 @@ def get_overview():
                 entry[key] = 0
         all_products_trend.append(entry)
 
-    return safe_json({
+    result = safe_json({
         "q1_summary": q1_summary,
         "month_comparison": month_comparison,
         "product_mix": product_mix,
         "all_products_trend": all_products_trend,
     })
+    await set_api_cache("overview", result)
+    return result

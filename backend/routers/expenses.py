@@ -6,6 +6,7 @@ import numpy as np
 from fastapi import APIRouter
 from constants import FCFA_TO_EUR
 from name_map import activity_display_name
+from cache.redis_client import get_api_cache, set_api_cache
 
 router = APIRouter()
 
@@ -22,7 +23,11 @@ def _get_data():
 
 
 @router.get("/expenses")
-def get_expenses():
+async def get_expenses():
+    cached = await get_api_cache("expenses")
+    if cached:
+        return cached
+
     data = _get_data()
 
     month_labels = {"jan": "January", "feb": "February", "mar": "March"}
@@ -82,8 +87,10 @@ def get_expenses():
         for act, total in sorted(activity_totals.items(), key=lambda x: x[1], reverse=True)
     ]
 
-    return safe_json({
+    result = safe_json({
         "budget_flow": budget_flow,
         "activity_type_totals": activity_type_totals,
         "all_expenses": all_expenses,
     })
+    await set_api_cache("expenses", result)
+    return result

@@ -9,6 +9,7 @@ import json
 import os
 import pandas as pd
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 from .base import StorageBackend
 
 SCOPES = [
@@ -28,7 +29,7 @@ class SheetStorage(StorageBackend):
         creds_dict = json.loads(creds_json)
         self.creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         self.client = gspread.authorize(self.creds)
-        self._cache: dict[str, pd.DataFrame] = {}
+        self.drive_service = build('drive', 'v3', credentials=self.creds)
         self._sheet_map: dict[str, str] = {}  # logical_key → spreadsheet_id
 
     def discover(self, folder_id: str) -> dict:
@@ -51,6 +52,15 @@ class SheetStorage(StorageBackend):
             or os.getenv(logical_key, "")
         )
 
+    def get_modified_time(self, sheet_id: str) -> str | None:
+        """Fetch the latest modifiedTime from Drive API."""
+        try:
+            file_meta = self.drive_service.files().get(fileId=sheet_id, fields="modifiedTime").execute()
+            return file_meta.get("modifiedTime")
+        except Exception as e:
+            print(f"[sheets] Could not get modified time for {sheet_id}: {e}")
+            return None
+
     def get_sheet_as_df(self, sheet_id: str, tab_name: str = None) -> pd.DataFrame:
         """
         Opens a Google Sheet by its spreadsheet ID, reads the specified tab
@@ -60,14 +70,7 @@ class SheetStorage(StorageBackend):
         All cell values come back as strings from gspread. The existing
         safe_num() helper in the loaders already converts strings to floats
         gracefully, so no extra coercion is needed here.
-
-        Results are memoised for the lifetime of the server process.
-        Call clear_cache() to evict all entries.
         """
-        cache_key = f"{sheet_id}:{tab_name}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-
         spreadsheet = self.client.open_by_key(sheet_id)
         if tab_name:
             worksheet = spreadsheet.worksheet(tab_name)
@@ -75,13 +78,7 @@ class SheetStorage(StorageBackend):
             worksheet = spreadsheet.get_worksheet(0)
 
         records = worksheet.get_all_values()  # list[list[str]], no header assumption
-        df = pd.DataFrame(records)
-        self._cache[cache_key] = df
-        return df
-
-    def clear_cache(self):
-        """Evict all cached DataFrames so the next request re-fetches from Sheets."""
-        self._cache = {}
+        return pd.DataFrame(records)
 
     # ── StorageBackend contract ──────────────────────────────────────────────
     # SheetStorage does not serve raw bytes or enumerate files; those

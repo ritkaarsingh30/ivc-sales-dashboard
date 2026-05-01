@@ -5,6 +5,7 @@ import json
 import numpy as np
 from fastapi import APIRouter
 from constants import FCFA_TO_EUR
+from cache.redis_client import get_api_cache, set_api_cache
 
 router = APIRouter()
 
@@ -27,7 +28,11 @@ def _get_delegates_df(data, month_key):
 
 
 @router.get("/delegates")
-def get_delegates():
+async def get_delegates():
+    cached = await get_api_cache("delegates")
+    if cached:
+        return cached
+
     data = _get_data()
     month_keys = ["jan", "feb", "mar"]
 
@@ -112,9 +117,11 @@ def get_delegates():
                 entry[key] = None
         ctc_ratios.append(entry)
 
-    return safe_json({
+    result = safe_json({
         "visit_counts": visit_counts,
         "orders": orders,
         "avg_per_day": avg_per_day,
         "ctc_ratios": ctc_ratios,
     })
+    await set_api_cache("delegates", result)
+    return result

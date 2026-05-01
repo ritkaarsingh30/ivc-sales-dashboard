@@ -1,12 +1,7 @@
-"""
-sheets_loader.py — Google Sheets equivalent of load_all_data().
-
-Reads spreadsheet IDs from the SheetStorage sheet_map (auto-discovered via
-Drive API) rather than from individual .env variables. Falls back gracefully
-when a sheet is not found (same behaviour as a missing local file).
-"""
-
 import os
+import time
+import asyncio
+from datetime import datetime
 from storage.sheets import SheetStorage
 from loaders import (
     load_sales,
@@ -17,43 +12,75 @@ from loaders import (
     load_copy_report,
     load_tour_plan,
 )
+from cache.redis_client import get_sheet_metadata, set_sheet_metadata
+import pandas as pd
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _safe_df(storage: SheetStorage, sheet_id: str, tab_name: str = None):
-    """Return a DataFrame or None when the sheet_id is not configured."""
-    if not sheet_id:
-        return None
-    try:
-        return storage.get_sheet_as_df(sheet_id, tab_name)
-    except Exception as exc:
-        print(f"[sheets_loader] Could not fetch sheet {sheet_id!r} tab {tab_name!r}: {exc}")
-        return None
-
-
-def _all_tabs_as_dfs(storage: SheetStorage, sheet_id: str):
+async def _fetch_sheet_cached(storage: SheetStorage, logical_key: str, sheet_id: str):
     """
-    Returns a list of (tab_name, DataFrame) for every worksheet in the
-    spreadsheet.  Used to read visit-tracker workbooks that have one tab
-    per MR.
+    Checks Redis metadata. If unchanged, returns (True, None, drive_modified).
+    If changed or missed, fetches from API, updates Redis, and returns (False, spreadsheet object, drive_modified).
     """
     if not sheet_id:
-        return []
+        return True, None
+        
     try:
-        spreadsheet = storage.client.open_by_key(sheet_id)
-        result = []
-        for ws in spreadsheet.worksheets():
-            records = ws.get_all_values()
-            import pandas as pd
-            df = pd.DataFrame(records)
-            result.append((ws.title, df))
-        return result
+        drive_modified = await asyncio.get_event_loop().run_in_executor(None, storage.get_modified_time, sheet_id)
+        if not drive_modified:
+            drive_modified = datetime.utcnow().isoformat()
+            
+        meta = await get_sheet_metadata(sheet_id)
+        if meta and meta.get("drive_modified") == drive_modified:
+            print(f"[cache HIT] {logical_key}")
+            return True, None, drive_modified
+            
+        print(f"[cache MISS] {logical_key}")
+        await asyncio.sleep(1.2)
+        
+        spreadsheet = await asyncio.get_event_loop().run_in_executor(None, storage.client.open_by_key, sheet_id)
+        return False, spreadsheet, drive_modified
     except Exception as exc:
-        print(f"[sheets_loader] Could not open multi-tab workbook {sheet_id!r}: {exc}")
-        return []
+        print(f"[sheets_loader] Could not access sheet {logical_key} ({sheet_id!r}): {exc}")
+        return False, None, None
+
+
+async def _get_tab_df(spreadsheet, tab_name: str = None) -> tuple[pd.DataFrame | None, bool]:
+    if not spreadsheet:
+        return None, False
+    try:
+        def fetch():
+            if tab_name:
+                ws = spreadsheet.worksheet(tab_name)
+            else:
+                ws = spreadsheet.get_worksheet(0)
+            return pd.DataFrame(ws.get_all_values())
+        return await asyncio.get_event_loop().run_in_executor(None, fetch), False
+    except Exception as exc:
+        print(f"[sheets_loader] Could not fetch tab {tab_name!r}: {exc}")
+        import gspread
+        is_quota = isinstance(exc, gspread.exceptions.APIError)
+        return None, is_quota
+
+
+async def _get_all_tabs_dfs(spreadsheet) -> tuple[list, bool]:
+    if not spreadsheet:
+        return [], False
+    try:
+        def fetch():
+            result = []
+            for ws in spreadsheet.worksheets():
+                result.append((ws.title, pd.DataFrame(ws.get_all_values())))
+            return result
+        return await asyncio.get_event_loop().run_in_executor(None, fetch), False
+    except Exception as exc:
+        print(f"[sheets_loader] Could not fetch all tabs: {exc}")
+        import gspread
+        is_quota = isinstance(exc, gspread.exceptions.APIError)
+        return [], is_quota
 
 
 # ---------------------------------------------------------------------------
@@ -104,58 +131,57 @@ MONTHS = [
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def load_all_from_sheets(storage: SheetStorage) -> dict:
+async def load_all_from_sheets(storage: SheetStorage) -> dict:
     """
     Fetch every required DataFrame from Google Sheets and pass them to
     the standard loaders via the df= parameter path.
-
-    Returns the same dict structure as load_all_data():
-      { "jan": { "sales": ..., "projection": ..., ... }, "feb": ..., "mar": ... }
-
-    Sheet IDs come from storage.sheet_id() which checks the auto-discovered
-    _sheet_map first, then falls back to env vars of the same name.
     """
-    import pandas as pd
-
     data = {}
 
-    # ── Master spreadsheet IDs (auto-discovered or env fallback) ────────────
     sales_id = storage.sheet_id("SHEET_SALES")
-    copy_id  = storage.sheet_id("SHEET_COPY_REPORT")
+    hit, sales_ss, sales_mod = await _fetch_sheet_cached(storage, "SHEET_SALES", sales_id)
+    
+    copy_id = storage.sheet_id("SHEET_COPY_REPORT")
+    hit, copy_ss, copy_mod = await _fetch_sheet_cached(storage, "SHEET_COPY_REPORT", copy_id)
 
     for m in MONTHS:
         key = m["key"]
         print(f"[sheets_loader] Loading {key.upper()} data from Google Sheets…")
 
         # ── Sales ──────────────────────────────────────────────────────────
-        sales_df = _safe_df(storage, sales_id, m["sales_tab"])
-        prev_sales_df = (
-            _safe_df(storage, sales_id, m["prev_sales_tab"])
-            if m["prev_sales_tab"]
-            else None
-        )
+        sales_df, s_err1 = await _get_tab_df(sales_ss, m["sales_tab"])
+        prev_sales_df, s_err2 = await _get_tab_df(sales_ss, m["prev_sales_tab"]) if m["prev_sales_tab"] else (None, False)
+        
         if sales_df is not None:
             sales = load_sales(df=sales_df, prev_df=prev_sales_df)
         else:
             sales = {"current": pd.DataFrame(), "prev": pd.DataFrame()}
-
+            
+        if not hit and not s_err1 and not s_err2:
+            await set_sheet_metadata(sales_id, datetime.utcnow().isoformat(), sales_mod)
 
         # ── Projection + Activity Plan ─────────────────────────────────────
         proj_id = storage.sheet_id(m["projection_key"])
-        proj_df = _safe_df(storage, proj_id, "PROJECTION")
-        activity_df = _safe_df(storage, proj_id, "ACTIVITY PLAN")
-        if proj_id:
+        hit, proj_ss, proj_mod = await _fetch_sheet_cached(storage, m["projection_key"], proj_id)
+        proj_df, p_err1 = await _get_tab_df(proj_ss, "PROJECTION")
+        activity_df, p_err2 = await _get_tab_df(proj_ss, "ACTIVITY PLAN")
+        if proj_id and (proj_df is not None or activity_df is not None):
             projection = load_projection(df=proj_df, activity_df=activity_df)
+            if not hit and not p_err1 and not p_err2:
+                await set_sheet_metadata(proj_id, datetime.utcnow().isoformat(), proj_mod)
         else:
             projection = {"projection": None, "activity_plan": None, "missing_sheets": ["ALL"]}
 
-        # ── Expense (3 tabs from one workbook) ─────────────────────────────
+        # ── Expense ────────────────────────────────────────────────────────
         exp_id = storage.sheet_id(m["expense_key"])
-        if exp_id:
-            mr_df  = _safe_df(storage, exp_id, "MONEY RECEIVED")
-            ae_df  = _safe_df(storage, exp_id, "ACTIVITY EXP.")
-            oe_df  = _safe_df(storage, exp_id, "OTHER EXP.")
+        hit, exp_ss, exp_mod = await _fetch_sheet_cached(storage, m["expense_key"], exp_id)
+        if exp_ss:
+            mr_df, e_err1 = await _get_tab_df(exp_ss, "MONEY RECEIVED")
+            ae_df, e_err2 = await _get_tab_df(exp_ss, "ACTIVITY EXP.")
+            oe_df, e_err3 = await _get_tab_df(exp_ss, "OTHER EXP.")
             expense = _load_expense_from_sheets(mr_df, ae_df, oe_df)
+            if not hit and not (e_err1 or e_err2 or e_err3) and (mr_df is not None or ae_df is not None or oe_df is not None):
+                await set_sheet_metadata(exp_id, datetime.utcnow().isoformat(), exp_mod)
         else:
             expense = {
                 "activity_exp": None, "other_exp": None, "money_received": None,
@@ -166,41 +192,51 @@ def load_all_from_sheets(storage: SheetStorage) -> dict:
 
         # ── Monthly Reports ────────────────────────────────────────────────
         monthly_id = storage.sheet_id(m["monthly_key"])
-        if monthly_id:
-            del_df    = _safe_df(storage, monthly_id, "Delegates Reports")
-            budget_df = _safe_df(storage, monthly_id, "Budget Analysis")
+        hit, monthly_ss, monthly_mod = await _fetch_sheet_cached(storage, m["monthly_key"], monthly_id)
+        if monthly_ss:
+            del_df, m_err1 = await _get_tab_df(monthly_ss, "Delegates Reports")
+            budget_df, m_err2 = await _get_tab_df(monthly_ss, "Budget Analysis")
             monthly = load_monthly_reports(df=del_df, budget_df=budget_df)
+            if not hit and not (m_err1 or m_err2) and (del_df is not None or budget_df is not None):
+                await set_sheet_metadata(monthly_id, datetime.utcnow().isoformat(), monthly_mod)
         else:
             monthly = {"delegates": None, "budget_analysis": None, "missing_sheets": ["ALL"]}
 
         # ── Copy Report ────────────────────────────────────────────────────
-        copy_df = _safe_df(storage, copy_id, m["copy_tab"])
-        copy = (
-            load_copy_report(df=copy_df)
-            if copy_df is not None
-            else {
+        copy_df, c_err = await _get_tab_df(copy_ss, m["copy_tab"])
+        if copy_df is not None:
+            copy = load_copy_report(df=copy_df)
+            if not hit and not c_err:
+                await set_sheet_metadata(copy_id, datetime.utcnow().isoformat(), copy_mod)
+        else:
+            copy = {
                 "product_perf": pd.DataFrame(),
                 "plan_activities": pd.DataFrame(),
                 "actual_activities": pd.DataFrame(),
-                "missing_sheets": [],
+                "missing_sheets": ["ALL"],
             }
-        )
 
         # ── Tour Plan ──────────────────────────────────────────────────────
         tour_id = storage.sheet_id(m["tour_key"])
-        tour_df = _safe_df(storage, tour_id)
-        tour = load_tour_plan(df=tour_df) if tour_df is not None else pd.DataFrame()
-
-        # ── Visit Tracker (one tab per MR) ─────────────────────────────────
-        visits_id = storage.sheet_id(m["visits_key"])
-        if visits_id:
-            tab_dfs   = _all_tabs_as_dfs(storage, visits_id)
-            sheets_arg = [(df, m["visits_label"]) for _, df in tab_dfs]
-            visits    = load_visit_tracker(sheets=sheets_arg)
+        hit, tour_ss, tour_mod = await _fetch_sheet_cached(storage, m["tour_key"], tour_id)
+        tour_df, t_err = await _get_tab_df(tour_ss)
+        if tour_df is not None:
+            tour = load_tour_plan(df=tour_df)
+            if not hit and not t_err: await set_sheet_metadata(tour_id, datetime.utcnow().isoformat(), tour_mod)
         else:
-            visits = pd.DataFrame(
-                columns=["MR_ID", "MR", "Doctor", "Speciality", "Clinic", "Visit_Date", "Month"]
-            )
+            tour = pd.DataFrame()
+
+        # ── Visit Tracker ──────────────────────────────────────────────────
+        visits_id = storage.sheet_id(m["visits_key"])
+        hit, visits_ss, visits_mod = await _fetch_sheet_cached(storage, m["visits_key"], visits_id)
+        if visits_ss:
+            tab_dfs, v_err = await _get_all_tabs_dfs(visits_ss)
+            sheets_arg = [(df, m["visits_label"]) for _, df in tab_dfs]
+            visits = load_visit_tracker(sheets=sheets_arg)
+            if not hit and tab_dfs and not v_err:
+                await set_sheet_metadata(visits_id, datetime.utcnow().isoformat(), visits_mod)
+        else:
+            visits = pd.DataFrame(columns=["MR_ID", "MR", "Doctor", "Speciality", "Clinic", "Visit_Date", "Month"])
 
         data[key] = {
             "sales": sales, "projection": projection, "expense": expense,
@@ -211,17 +247,107 @@ def load_all_from_sheets(storage: SheetStorage) -> dict:
     return data
 
 
+async def refresh_changed_from_sheets(storage: SheetStorage, existing_data: dict) -> tuple[dict, list[str]]:
+    """
+    Check all sheets for modifications. Only refetch the ones that changed.
+    Updates existing_data in-place and returns (updated_data, changed_env_keys).
+    """
+    changed_env_keys = []
+    
+    # Check master sheets
+    sales_id = storage.sheet_id("SHEET_SALES")
+    hit, sales_ss, sales_mod = await _fetch_sheet_cached(storage, "SHEET_SALES", sales_id)
+    if not hit and sales_id:
+        changed_env_keys.append("SHEET_SALES")
+        any_sales_success = False
+        for m in MONTHS:
+            sales_df, s_err = await _get_tab_df(sales_ss, m["sales_tab"])
+            prev_sales_df, p_err = await _get_tab_df(sales_ss, m["prev_sales_tab"]) if m["prev_sales_tab"] else (None, False)
+            existing_data[m["key"]]["sales"] = load_sales(df=sales_df, prev_df=prev_sales_df) if sales_df is not None else {"current": pd.DataFrame(), "prev": pd.DataFrame()}
+            if sales_df is not None: any_sales_success = True
+            if s_err or p_err: any_sales_success = False
+        if any_sales_success:
+            await set_sheet_metadata(sales_id, datetime.utcnow().isoformat(), sales_mod)
+
+    copy_id = storage.sheet_id("SHEET_COPY_REPORT")
+    hit, copy_ss, copy_mod = await _fetch_sheet_cached(storage, "SHEET_COPY_REPORT", copy_id)
+    if not hit and copy_id:
+        changed_env_keys.append("SHEET_COPY_REPORT")
+        any_copy_success = False
+        for m in MONTHS:
+            copy_df, c_err = await _get_tab_df(copy_ss, m["copy_tab"])
+            existing_data[m["key"]]["copy"] = load_copy_report(df=copy_df) if copy_df is not None else {"product_perf": pd.DataFrame(), "plan_activities": pd.DataFrame(), "actual_activities": pd.DataFrame(), "missing_sheets": ["ALL"]}
+            if copy_df is not None: any_copy_success = True
+            if c_err: any_copy_success = False
+        if any_copy_success:
+            await set_sheet_metadata(copy_id, datetime.utcnow().isoformat(), copy_mod)
+
+    # Check monthly sheets
+    for m in MONTHS:
+        k = m["key"]
+        
+        proj_id = storage.sheet_id(m["projection_key"])
+        hit, proj_ss, proj_mod = await _fetch_sheet_cached(storage, m["projection_key"], proj_id)
+        if not hit and proj_id:
+            changed_env_keys.append(m["projection_key"])
+            proj_df, p_err1 = await _get_tab_df(proj_ss, "PROJECTION")
+            activity_df, p_err2 = await _get_tab_df(proj_ss, "ACTIVITY PLAN")
+            if proj_df is not None or activity_df is not None:
+                existing_data[k]["projection"] = load_projection(df=proj_df, activity_df=activity_df)
+                if not hit and not p_err1 and not p_err2:
+                    await set_sheet_metadata(proj_id, datetime.utcnow().isoformat(), proj_mod)
+                
+        exp_id = storage.sheet_id(m["expense_key"])
+        hit, exp_ss, exp_mod = await _fetch_sheet_cached(storage, m["expense_key"], exp_id)
+        if not hit and exp_id:
+            changed_env_keys.append(m["expense_key"])
+            if exp_ss:
+                mr_df, e_err1 = await _get_tab_df(exp_ss, "MONEY RECEIVED")
+                ae_df, e_err2 = await _get_tab_df(exp_ss, "ACTIVITY EXP.")
+                oe_df, e_err3 = await _get_tab_df(exp_ss, "OTHER EXP.")
+                existing_data[k]["expense"] = _load_expense_from_sheets(mr_df, ae_df, oe_df)
+                if not hit and not (e_err1 or e_err2 or e_err3) and (mr_df is not None or ae_df is not None or oe_df is not None):
+                    await set_sheet_metadata(exp_id, datetime.utcnow().isoformat(), exp_mod)
+                
+        monthly_id = storage.sheet_id(m["monthly_key"])
+        hit, monthly_ss, monthly_mod = await _fetch_sheet_cached(storage, m["monthly_key"], monthly_id)
+        if not hit and monthly_id:
+            changed_env_keys.append(m["monthly_key"])
+            if monthly_ss:
+                del_df, m_err1 = await _get_tab_df(monthly_ss, "Delegates Reports")
+                budget_df, m_err2 = await _get_tab_df(monthly_ss, "Budget Analysis")
+                existing_data[k]["monthly"] = load_monthly_reports(df=del_df, budget_df=budget_df)
+                if not hit and not (m_err1 or m_err2) and (del_df is not None or budget_df is not None):
+                    await set_sheet_metadata(monthly_id, datetime.utcnow().isoformat(), monthly_mod)
+                
+        tour_id = storage.sheet_id(m["tour_key"])
+        hit, tour_ss, tour_mod = await _fetch_sheet_cached(storage, m["tour_key"], tour_id)
+        if not hit and tour_id:
+            changed_env_keys.append(m["tour_key"])
+            tour_df, t_err = await _get_tab_df(tour_ss)
+            existing_data[k]["tour"] = load_tour_plan(df=tour_df) if tour_df is not None else pd.DataFrame()
+            if tour_df is not None and not hit and not t_err:
+                await set_sheet_metadata(tour_id, datetime.utcnow().isoformat(), tour_mod)
+            
+        visits_id = storage.sheet_id(m["visits_key"])
+        hit, visits_ss, visits_mod = await _fetch_sheet_cached(storage, m["visits_key"], visits_id)
+        if not hit and visits_id:
+            changed_env_keys.append(m["visits_key"])
+            if visits_ss:
+                tab_dfs, v_err = await _get_all_tabs_dfs(visits_ss)
+                sheets_arg = [(df, m["visits_label"]) for _, df in tab_dfs]
+                existing_data[k]["visits"] = load_visit_tracker(sheets=sheets_arg)
+                if not hit and tab_dfs and not v_err:
+                    await set_sheet_metadata(visits_id, datetime.utcnow().isoformat(), visits_mod)
+
+    return existing_data, changed_env_keys
+
+
 # ---------------------------------------------------------------------------
 # Expense helper — runs the same parsing as load_expense but with pre-built DFs
 # ---------------------------------------------------------------------------
 
 def _load_expense_from_sheets(raw_mr, raw_ae, raw_oe):
-    """
-    Replicates load_expense parsing using three pre-fetched DataFrames
-    (one per tab: MONEY RECEIVED, ACTIVITY EXP., OTHER EXP.).
-    This avoids duplicating the parsing logic while still supporting the
-    three-tab structure that load_expense normally reads from a single workbook.
-    """
     from constants import FCFA_TO_EUR
     from utils import safe_num
     from name_map import normalize_mr, normalize_doctor, normalize_activity, parse_multi_products, activity_display_name

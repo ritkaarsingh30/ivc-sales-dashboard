@@ -4,6 +4,7 @@ GET /api/products — Q1 product trend, annual vs Q1, category mix
 import json
 import numpy as np
 from fastapi import APIRouter
+from cache.redis_client import get_api_cache, set_api_cache
 
 router = APIRouter()
 
@@ -20,7 +21,11 @@ def _get_data():
 
 
 @router.get("/products")
-def get_products():
+async def get_products():
+    cached = await get_api_cache("products")
+    if cached:
+        return cached
+
     data = _get_data()
 
     month_keys = ["jan", "feb", "mar"]
@@ -97,8 +102,10 @@ def get_products():
             tablet, inj = 0, 0
         category_mix[key] = {"tablet": tablet, "injectable": inj}
 
-    return safe_json({
+    result = safe_json({
         "q1_trend": q1_trend,
         "annual_vs_q1": annual_vs_q1,
         "category_mix": category_mix,
     })
+    await set_api_cache("products", result)
+    return result

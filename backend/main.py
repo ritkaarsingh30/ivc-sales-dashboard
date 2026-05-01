@@ -39,6 +39,29 @@ def _build_doctor_index_from_data(data: dict):
     build_doctor_index(all_doctors)
 
 
+async def eager_recompute(endpoints: list[str]):
+    """Call router functions directly to eagerly populate cache."""
+    from routers.overview import get_overview
+    from routers.months import get_month
+    from routers.products import get_products
+    from routers.delegates import get_delegates
+    from routers.expenses import get_expenses
+    from routers.insights import get_insights
+    from fastapi import Request
+    
+    scope = {"type": "http", "method": "GET"}
+    dummy_req = Request(scope)
+
+    if "overview" in endpoints: await get_overview()
+    if "months:jan" in endpoints: await get_month("jan")
+    if "months:feb" in endpoints: await get_month("feb")
+    if "months:mar" in endpoints: await get_month("mar")
+    if "products" in endpoints: await get_products()
+    if "delegates" in endpoints: await get_delegates()
+    if "expenses" in endpoints: await get_expenses()
+    if "insights" in endpoints: await get_insights(dummy_req)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: load all data once
@@ -53,16 +76,71 @@ async def lifespan(app: FastAPI):
             storage.discover(folder_id)
         else:
             print("[startup] GOOGLE_DRIVE_FOLDER_ID not set — sheet IDs must be in .env")
-        print("Loading all IVC data from Google Sheets…")
-        data = load_all_from_sheets(storage)
+            
+        from cache.redis_client import health_check, get_api_cache
+        redis_ok = await health_check()
+        
+        all_present = False
+        if redis_ok:
+            all_present = True
+            for k in ["overview", "months:jan", "months:feb", "months:mar", "products", "delegates", "expenses", "insights"]:
+                if not await get_api_cache(k):
+                    all_present = False
+                    break
+                    
+        if all_present:
+            print("[startup] All data loaded from Redis cache")
+            data = {
+                "jan": {"sales": {}, "projection": {}, "expense": {}, "monthly": {}, "copy": {}, "tour": {}, "visits": {}},
+                "feb": {"sales": {}, "projection": {}, "expense": {}, "monthly": {}, "copy": {}, "tour": {}, "visits": {}},
+                "mar": {"sales": {}, "projection": {}, "expense": {}, "monthly": {}, "copy": {}, "tour": {}, "visits": {}},
+            }
+        else:
+            from loaders import load_all_data
+            from storage.local import LocalStorage
+            print("Loading baseline IVC data from local files to save Google API quotas…")
+            data = load_all_data(LocalStorage())
+            app_state["data"] = data
+            _build_doctor_index_from_data(data)
+            
+            # Eagerly populate cache
+            if redis_ok:
+                await eager_recompute(["overview", "months:jan", "months:feb", "months:mar", "products", "delegates", "expenses", "insights"])
+                
+                # Sync Google Drive metadata into Redis so refresh_changed_from_sheets works seamlessly
+                import asyncio
+                from datetime import datetime
+                from sheets_loader import MONTHS
+                from cache.redis_client import set_sheet_metadata
+                
+                print("Syncing Google Drive metadata to Redis to establish baseline…")
+                keys = ["SHEET_SALES", "SHEET_COPY_REPORT"]
+                for m in MONTHS:
+                    keys.extend([m["projection_key"], m["expense_key"], m["monthly_key"], m["tour_key"], m["visits_key"]])
+                
+                for k in keys:
+                    sheet_id = storage.sheet_id(k)
+                    if sheet_id:
+                        try:
+                            drive_mod = await asyncio.get_event_loop().run_in_executor(None, storage.get_modified_time, sheet_id)
+                            if drive_mod:
+                                await set_sheet_metadata(sheet_id, datetime.utcnow().isoformat(), drive_mod)
+                        except Exception as exc:
+                            print(f"[startup] Could not sync metadata for {k}: {exc}")
     else:
         from loaders import load_all_data
-        print("Loading all IVC data files…")
+        from cache.redis_client import health_check
+        
+        print("Loading all IVC data files locally…")
         data = load_all_data(storage)
+        app_state["data"] = data
+        _build_doctor_index_from_data(data)
+        
+        redis_ok = await health_check()
+        if redis_ok:
+            await eager_recompute(["overview", "months:jan", "months:feb", "months:mar", "products", "delegates", "expenses", "insights"])
 
     print(f"Loaded months: {list(data.keys())}")
-    _build_doctor_index_from_data(data)
-
     app_state["data"] = data
     app_state["storage"] = storage
     app_state["insights_cache"] = None  # populated on first /api/insights call
@@ -111,19 +189,45 @@ async def refresh_data():
     if storage is None:
         return {"status": "error", "reason": "Storage not initialised"}
 
-    # Clear gspread in-memory cache so next fetch is fresh from Google
-    storage.clear_cache()
-
-    # Re-scan the Drive folder in case new files were uploaded since startup
     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
     if folder_id:
         storage.discover(folder_id)
 
-    from sheets_loader import load_all_from_sheets
-    data = load_all_from_sheets(storage)
-    _build_doctor_index_from_data(data)
+    from sheets_loader import refresh_changed_from_sheets
+    from cache.redis_client import SHEET_DEPENDENCIES, invalidate_api_keys
+    
+    existing_data = app_state.get("data", {})
+    updated_data, changed_keys = await refresh_changed_from_sheets(storage, existing_data)
+    app_state["data"] = updated_data
+    _build_doctor_index_from_data(updated_data)
 
-    app_state["data"] = data
-    app_state["insights_cache"] = None  # force AI insight regeneration
+    if changed_keys:
+        endpoints_to_invalidate = set()
+        for ck in changed_keys:
+            if ck in SHEET_DEPENDENCIES:
+                endpoints_to_invalidate.update(SHEET_DEPENDENCIES[ck])
+        
+        endpoints_to_invalidate.add("insights")
+        app_state["insights_cache"] = None
+        
+        endpoints_list = list(endpoints_to_invalidate)
+        await invalidate_api_keys(endpoints_list)
+        
+        await eager_recompute(endpoints_list)
 
-    return {"status": "ok", "months_refreshed": list(data.keys())}
+    return {"status": "ok", "months_refreshed": ["jan", "feb", "mar"], "changed_sheets": changed_keys}
+
+
+@app.get("/api/cache/redisStatus")
+async def get_redis_status():
+    from cache.redis_client import health_check, redis_client
+    is_ok = await health_check()
+    if not is_ok:
+        return {"redis_available": False}
+        
+    keys = await redis_client.keys("api:*")
+    return {
+        "redis_available": True,
+        "cached_endpoints": len(keys),
+        "keys": keys
+    }
