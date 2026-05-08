@@ -5,10 +5,11 @@ import SectionLabel from '../components/SectionLabel'
 import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
 import Badge from '../components/Badge'
+import SalesOutcomeCell from '../components/SalesOutcomeCell'
 import TourPlanSection from '../components/TourPlanSection'
 import VisitTrackerSection from '../components/VisitTrackerSection'
-import { baseOptions, COLORS } from '../utils/chartConfig'
-import { MONTH_CONFIG, calcChange, fmtChange, changeDir } from '../utils/monthConfig'
+import { baseOptions, COLORS, buildCallChartData, buildCallChartOptions } from '../utils/chartConfig'
+import { MONTH_CONFIG, DELEGATE_COLS, AE_COLS, calcChange, fmtChange, changeDir } from '../utils/monthConfig'
 
 const CFG = MONTH_CONFIG.mar
 const PREV = MONTH_CONFIG[CFG.prev]
@@ -38,17 +39,17 @@ export default function MarTab() {
   if (isLoading) return <div className="loading">⟳ Loading {CFG.label} data...</div>
   if (isError) return <div className="error">✕ Failed to load {CFG.label} data. Is the backend running?</div>
 
-  const k = data.kpis || {}
+  const k  = data.kpis || {}
   const pk = prevData?.kpis || {}
+  const cb = data.call_breakdown || {}
   const tva = data.target_vs_achieved || []
-  const ps = data.product_sales || []
-  const dt = data.delegate_table || []
-  const ae = data.activity_expenses || []
-  const ds = data.distributor_sales || []
-  const tp = data.tour_plan || {}
-  const vt = data.visit_tracker || {}
+  const ps  = data.product_sales || []
+  const dt  = data.delegate_table || []
+  const ae  = data.activity_expenses || []
+  const ds  = data.distributor_sales || []
+  const tp  = data.tour_plan || {}
+  const vt  = data.visit_tracker || {}
 
-  // Dynamic changes from prev month
   const chgSales  = calcChange(k.total_sales_eur,      pk.total_sales_eur)
   const chgTab    = calcChange(k.tablet_sales_eur,     pk.tablet_sales_eur)
   const chgInj    = calcChange(k.injectable_sales_eur, pk.injectable_sales_eur)
@@ -60,8 +61,8 @@ export default function MarTab() {
     labels: tva.map(r => r.product),
     datasets: [
       { label: 'Target',   data: tva.map(r => r.target),   backgroundColor: 'rgba(16,185,129,0.2)', borderColor: COLORS.mar, borderWidth: 1 },
-      { label: 'Achieved', data: tva.map(r => r.achieved),  backgroundColor: COLORS.marA, borderColor: COLORS.mar, borderWidth: 1 },
-    ]
+      { label: 'Achieved', data: tva.map(r => r.achieved),  backgroundColor: COLORS.marA,           borderColor: COLORS.mar, borderWidth: 1 },
+    ],
   }
 
   const psData = {
@@ -72,7 +73,7 @@ export default function MarTab() {
       backgroundColor: COLORS.marA,
       borderColor: COLORS.mar,
       borderWidth: 1,
-    }]
+    }],
   }
 
   const ctcData = {
@@ -83,7 +84,7 @@ export default function MarTab() {
       backgroundColor: dt.map(r => ctcColor(r.ctc_ratio) + '99'),
       borderColor: dt.map(r => ctcColor(r.ctc_ratio)),
       borderWidth: 2,
-    }]
+    }],
   }
 
   const ctcOptions = {
@@ -97,29 +98,19 @@ export default function MarTab() {
             yMin: 25, yMax: 25,
             borderColor: COLORS.danger,
             borderWidth: 2, borderDash: [6, 4],
-            label: { content: '25% Target', enabled: true, color: COLORS.danger, font: { size: 10 } }
-          }
-        }
-      }
-    }
+            label: { content: '25% Target', enabled: true, color: COLORS.danger, font: { size: 10 } },
+          },
+        },
+      },
+    },
   }
 
-  const delCols = [
-    { key: 'name', label: 'Delegate' }, { key: 'territory', label: 'Territory' },
-    { key: 'total_calls', label: 'Total Calls' }, { key: 'prescriber', label: 'Prescriber' },
-    { key: 'pharmacy', label: 'Pharmacy' }, { key: 'days_worked', label: 'Days' },
-    { key: 'orders_eur', label: 'Orders (€)' }, { key: 'ctc_eur', label: 'CTC (€)' }, { key: 'ctc_ratio', label: 'CTC Ratio' },
-  ]
-
-  const aeCols = [
-    { key: 'sn', label: '#' }, { key: 'doctor', label: 'Doctor/Contact' },
-    { key: 'hospital', label: 'Hospital' }, { key: 'activity_badge', label: 'Activity' },
-    { key: 'products', label: 'Products' }, { key: 'amount_fcfa', label: 'FCFA' },
-    { key: 'amount_eur', label: '€' }, { key: 'responsible', label: 'Responsible' },
-  ]
   const aeRows = ae.map(r => ({
     ...r,
-    activity_badge: <span className={`act-type-badge ${actBadgeClass(r.activity)}`}>{r.activity}</span>
+    activity_badge:      <span className={`act-type-badge ${actBadgeClass(r.activity)}`}>{r.activity}</span>,
+    sales_outcome_cell:  <SalesOutcomeCell items={r.sales_outcome} />,
+    sales_value_fmt:     r.sales_outcome_eur > 0 ? `€${Number(r.sales_outcome_eur).toLocaleString()}` : '—',
+    visits_fmt:          r.num_visits > 0 ? r.num_visits : '—',
   }))
 
   const dsCols = [
@@ -131,8 +122,6 @@ export default function MarTab() {
   const dsRows = ds.map(r => ({ ...r, share_pct_badge: <Badge text={`${r.share_pct}%`} variant={CFG.cls} /> }))
 
   const isOverrun = (k.closing_balance_eur || 0) < 0
-  const tabLabel  = `${((k.tablet_sales_eur||0)/(k.total_sales_eur||1)*100).toFixed(1)}% of total`
-  const injLabel  = `${((k.injectable_sales_eur||0)/(k.total_sales_eur||1)*100).toFixed(1)}% of total`
 
   return (
     <div>
@@ -140,10 +129,16 @@ export default function MarTab() {
       <div className="kpi-grid">
         <KpiCard label="Total Sales"       value={`€${(k.total_sales_eur||0).toLocaleString()}`}
           change={fmtChange(chgSales)}  changeDir={changeDir(chgSales)} monthColor={CFG.cls} />
+        <KpiCard label="Sales Target"
+          value={k.total_target_eur != null ? `€${(k.total_target_eur||0).toLocaleString()}` : '—'}
+          sub={k.achievement_pct != null ? `${k.achievement_pct}% achieved` : 'No target set'}
+          monthColor={k.achievement_pct >= 100 ? 'g' : CFG.cls} />
         <KpiCard label="Tablet Sales"      value={`€${(k.tablet_sales_eur||0).toLocaleString()}`}
-          sub={tabLabel} change={fmtChange(chgTab)} changeDir={changeDir(chgTab)} monthColor={CFG.cls} />
+          sub={`${((k.tablet_sales_eur||0)/(k.total_sales_eur||1)*100).toFixed(1)}% of total`}
+          change={fmtChange(chgTab)} changeDir={changeDir(chgTab)} monthColor={CFG.cls} />
         <KpiCard label="Injectable Sales"  value={`€${(k.injectable_sales_eur||0).toLocaleString()}`}
-          sub={injLabel} change={fmtChange(chgInj)} changeDir={changeDir(chgInj)} monthColor={CFG.cls} />
+          sub={`${((k.injectable_sales_eur||0)/(k.total_sales_eur||1)*100).toFixed(1)}% of total`}
+          change={fmtChange(chgInj)} changeDir={changeDir(chgInj)} monthColor={CFG.cls} />
         <KpiCard label="Total Visits"      value={k.total_visits ?? '—'}
           change={fmtChange(chgVisits)} changeDir={changeDir(chgVisits)} monthColor={CFG.cls} />
         <KpiCard label="Prescriber Calls"  value={k.prescriber_calls ?? '—'}
@@ -167,26 +162,33 @@ export default function MarTab() {
         </ChartCard>
       </div>
 
-      <SectionLabel tag={CFG.label.toUpperCase()} text="SALES & CTC BREAKDOWN" monthColor={CFG.sectionCls} />
+      <SectionLabel tag={CFG.label.toUpperCase()} text="SALES & CALL BREAKDOWN" monthColor={CFG.sectionCls} />
       <div className="grid-2">
         <ChartCard title={`Product Sales Value (€) — ${CFG.label}`} height="h300" monthColor={CFG.cls}>
           <Bar data={psData} options={baseOptions({ indexAxis: 'y', plugins: { legend: { display: false } } })} />
         </ChartCard>
-        <ChartCard title={`⚠️ CTC Ratio by Delegate — ${CFG.label}`}
-          sub="Red dashed = 25% target" height="h300" monthColor={CFG.cls}>
-          <Bar data={ctcData} options={ctcOptions} />
+        <ChartCard title={`Delegate Call Breakdown — ${CFG.label}`} sub="Prescriber · Non-Prescriber · Pharmacy" height="h300" monthColor={CFG.cls}>
+          <Bar data={buildCallChartData(cb)} options={buildCallChartOptions()} />
         </ChartCard>
       </div>
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="DELEGATE PERFORMANCE TABLE" monthColor={CFG.sectionCls} />
       <DataTable title={`${CFG.label} — Delegate KPIs`}
         badge={{ text: `${dt.length} Active`, variant: CFG.cls }}
-        borderColor={CFG.color} columns={delCols} rows={dt} />
+        borderColor={CFG.color} columns={DELEGATE_COLS} rows={dt} />
+
+      <SectionLabel tag={CFG.label.toUpperCase()} text="CTC RATIO ANALYSIS" monthColor={CFG.sectionCls} />
+      <div className="full">
+        <ChartCard title={`⚠️ CTC Ratio by Delegate — ${CFG.label}`}
+          sub="Red dashed = 25% target" height="h250" monthColor={CFG.cls}>
+          <Bar data={ctcData} options={ctcOptions} />
+        </ChartCard>
+      </div>
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="ACTIVITY EXPENSE DETAILS" monthColor={CFG.sectionCls} />
       <DataTable title={`Activity Expenses — ${CFG.label} 2026`}
         badge={{ text: `${isOverrun ? '⚠️ OVERRUN · ' : ''}FCFA ${(k.activity_spent_fcfa||0).toLocaleString()} | €${(k.activity_spent_eur||0).toLocaleString()}`, variant: isOverrun ? 'd' : CFG.cls }}
-        borderColor={CFG.color} columns={aeCols} rows={aeRows} />
+        borderColor={CFG.color} columns={AE_COLS} rows={aeRows} />
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="DISTRIBUTOR-WISE SALES" monthColor={CFG.sectionCls} />
       <DataTable title={`Sales by Distributor — ${CFG.label} 2026`} borderColor={CFG.color} columns={dsCols} rows={dsRows} />

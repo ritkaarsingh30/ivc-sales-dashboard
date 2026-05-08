@@ -3,6 +3,7 @@ import { useExpenses } from '../hooks/useDashboard'
 import SectionLabel from '../components/SectionLabel'
 import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
+import SalesOutcomeCell from '../components/SalesOutcomeCell'
 import { baseOptions, baseOptionsNoScale, COLORS, PALETTE } from '../utils/chartConfig'
 
 const FCFA_TO_EUR = 655.97
@@ -25,23 +26,6 @@ function fmtEur(n) {
   return n ? `€${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'
 }
 
-function SalesOutcomeCell({ items }) {
-  if (!items || items.length === 0) return <span style={{ color: 'var(--text-muted)' }}>—</span>
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-      {items.map((item, i) => (
-        <span key={i} style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
-          <span style={{ color: 'var(--text)' }}>{item.product_name}</span>
-          <span style={{ color: 'var(--text-muted)', margin: '0 3px' }}>×</span>
-          <span style={{ fontFamily: 'var(--mono)', color: 'var(--text)' }}>{item.qty}</span>
-          <span style={{ color: 'var(--text-muted)', marginLeft: '4px', fontSize: '10px' }}>
-            ({fmtEur(item.eur_value)})
-          </span>
-        </span>
-      ))}
-    </div>
-  )
-}
 
 const EXP_COLS = [
   { key: 'sn',             label: '#' },

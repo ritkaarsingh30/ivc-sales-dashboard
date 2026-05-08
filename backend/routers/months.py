@@ -184,6 +184,15 @@ async def get_month(month: str):
     activity_expenses = []
     if ae_df is not None and not ae_df.empty:
         for _, row in ae_df.iterrows():
+            outcome = row.get("Sales_Outcome")
+            if not isinstance(outcome, list):
+                outcome = []
+            outcome_eur = _safe_float(row.get("Sales_Outcome_EUR", 0))
+            num_visits_raw = row.get("Num_Visits", 0)
+            try:
+                num_visits = int(float(num_visits_raw)) if num_visits_raw else 0
+            except (ValueError, TypeError):
+                num_visits = 0
             activity_expenses.append({
                 "sn": int(row.get("SN", 0)),
                 "doctor": row.get("Doctor", ""),
@@ -194,6 +203,9 @@ async def get_month(month: str):
                 "amount_fcfa": round(float(row.get("Amount_FCFA", 0)), 2),
                 "amount_eur": round(float(row.get("Amount_EUR", 0)), 2),
                 "responsible": row.get("Responsible", ""),
+                "sales_outcome": outcome,
+                "sales_outcome_eur": round(outcome_eur, 2),
+                "num_visits": num_visits,
             })
 
     # ── Call Breakdown (for chart) ──

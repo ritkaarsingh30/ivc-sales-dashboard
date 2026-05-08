@@ -47,6 +47,27 @@ export const COLORS = {
   sky: '#38bdf8',
 }
 
+// Consistent stacked call-breakdown chart used across all month tabs
+export function buildCallChartData(cb) {
+  return {
+    labels: cb.labels || [],
+    datasets: [
+      { label: 'Prescriber',     data: cb.prescriber     || [], backgroundColor: 'rgba(59,130,246,0.6)',  borderColor: '#3b82f6', borderWidth: 1, stack: 'calls' },
+      { label: 'Non-Prescriber', data: cb.non_prescriber || [], backgroundColor: 'rgba(168,85,247,0.55)', borderColor: '#a855f7', borderWidth: 1, stack: 'calls' },
+      { label: 'Pharmacy',       data: cb.pharmacy       || [], backgroundColor: 'rgba(34,197,94,0.55)',  borderColor: '#22c55e', borderWidth: 1, stack: 'calls' },
+    ],
+  }
+}
+
+export function buildCallChartOptions() {
+  return baseOptions({
+    scales: {
+      x: { stacked: true, ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(26,31,53,0.8)' } },
+      y: { stacked: true, ticks: { color: '#64748b', font: { size: 10 }, stepSize: 1 }, grid: { color: 'rgba(26,31,53,0.8)' } },
+    },
+  })
+}
+
 export const PALETTE = [
   '#3b82f6','#f59e0b','#10b981','#a855f7','#f472b6','#38bdf8',
   '#fb923c','#84cc16','#06b6d4','#8b5cf6','#ec4899','#14b8a6'

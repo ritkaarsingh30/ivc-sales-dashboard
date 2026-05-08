@@ -21,6 +21,38 @@ export const MONTH_CONFIG = {
 
 export const MONTH_KEYS = Object.keys(MONTH_CONFIG)
 
+// Shared delegate table columns — used by all month tabs
+export const DELEGATE_COLS = [
+  { key: 'name',           label: 'Delegate' },
+  { key: 'territory',      label: 'Territory' },
+  { key: 'total_calls',    label: 'Total Calls' },
+  { key: 'prescriber',     label: 'Prescriber' },
+  { key: 'non_prescriber', label: 'Non-Pres.' },
+  { key: 'pharmacy',       label: 'Pharmacy' },
+  { key: 'drs_converted',  label: 'Drs Conv.' },
+  { key: 'days_worked',    label: 'Days' },
+  { key: 'orders_eur',     label: 'Orders (€)' },
+  { key: 'ctc_eur',        label: 'CTC (€)' },
+  { key: 'ctc_ratio',      label: 'CTC Ratio' },
+]
+
+// Shared activity-expense table columns — used by all month tabs
+// Row builder must supply: activity_badge, sales_outcome_cell, sales_value_fmt, visits_fmt
+export const AE_COLS = [
+  { key: 'sn',                 label: '#' },
+  { key: 'doctor',             label: 'Doctor/Contact' },
+  { key: 'hospital',           label: 'Hospital' },
+  { key: 'speciality',         label: 'Speciality' },
+  { key: 'activity_badge',     label: 'Activity' },
+  { key: 'products',           label: 'Products' },
+  { key: 'amount_fcfa',        label: 'FCFA' },
+  { key: 'amount_eur',         label: '€' },
+  { key: 'sales_outcome_cell', label: 'Sales Outcome' },
+  { key: 'sales_value_fmt',    label: 'Sales Value €' },
+  { key: 'visits_fmt',         label: 'Visits' },
+  { key: 'responsible',        label: 'Responsible' },
+]
+
 /**
  * Calculate a percentage change between current and previous values.
  * Returns null if either value is null/undefined/zero.
