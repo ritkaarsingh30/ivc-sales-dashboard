@@ -49,8 +49,13 @@ export const useRefreshData = () => {
   return useMutation({
     mutationFn: () => api.post('/data/refresh').then(r => r.data),
     onSuccess: () => {
-      // Invalidate ALL cached queries so every tab refetches fresh data
       qc.invalidateQueries()
     }
   })
 }
+
+export const useAvailableMonths = () => useQuery({
+  queryKey: ['availableMonths'],
+  queryFn: () => api.get('/health').then(r => r.data.months_loaded || []),
+  staleTime: 60 * 1000,
+})

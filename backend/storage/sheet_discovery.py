@@ -5,17 +5,17 @@ The user shares ONE folder with the service account and sets GOOGLE_DRIVE_FOLDER
 This module lists every spreadsheet in that folder (recursively into subfolders) and
 matches filenames to the known logical keys using keyword heuristics.
 
-Returned dict shape (same keys sheets_loader uses):
+Returned dict shape:
   {
     "SHEET_SALES":          "<spreadsheet_id>",
     "SHEET_COPY_REPORT":    "<spreadsheet_id>",
     "SHEET_JAN_EXPENSE":    "<spreadsheet_id>",
-    "SHEET_JAN_MONTHLY":    "<spreadsheet_id>",
+    ...
+    "SHEET_APR_EXPENSE":    "<spreadsheet_id>",   # new months auto-included
     ...
   }
 
-Any unmatched files are logged but ignored; any unmatched logical keys come back as
-empty strings so sheets_loader can skip them gracefully (same as an unset env var).
+Any unmatched files are logged but ignored. Unmatched logical keys map to "".
 """
 
 import re
@@ -23,18 +23,24 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 
-# ── Matching rules ───────────────────────────────────────────────────────────
-#
-# Each rule is (logical_key, required_all, month_aliases, forbidden).
-#   required_all  — ALL of these keywords must appear in the normalised filename (AND)
-#   month_aliases — at least ONE of these must appear (OR). Empty list = no month check.
-#   forbidden     — NONE of these may appear (AND NOT)
-
+# Full 12-month alias mapping — any new month in Drive gets auto-detected
 MONTH_ALIASES = {
     "jan": ["jan", "january"],
     "feb": ["feb", "february"],
     "mar": ["mar", "march"],
+    "apr": ["apr", "april"],
+    "may": ["may"],
+    "jun": ["jun", "june"],
+    "jul": ["jul", "july"],
+    "aug": ["aug", "august"],
+    "sep": ["sep", "september"],
+    "oct": ["oct", "october"],
+    "nov": ["nov", "november"],
+    "dec": ["dec", "december"],
 }
+
+ALL_MONTH_KEYS: list[str] = list(MONTH_ALIASES.keys())
+
 
 def _make_rules():
     rules = [
@@ -57,17 +63,10 @@ RULES = _make_rules()
 
 
 def _normalise(name: str) -> str:
-    """Lowercase, replace non-alphanumeric with space."""
     return re.sub(r"[^a-z0-9]+", " ", name.lower())
 
 
 def _matches(name_norm: str, required_all: list, month_aliases: list, forbidden: list) -> bool:
-    """
-    Returns True when:
-      - ALL keywords in required_all are present (AND)
-      - At least ONE alias in month_aliases is present (OR). Skipped when list is empty.
-      - NONE of the forbidden keywords are present
-    """
     if not all(kw in name_norm for kw in required_all):
         return False
     if month_aliases and not any(alias in name_norm for alias in month_aliases):
@@ -82,8 +81,7 @@ def _matches(name_norm: str, required_all: list, month_aliases: list, forbidden:
 def _list_spreadsheets_in_folder(drive_service, folder_id: str) -> list[dict]:
     """
     Returns a flat list of {'id': ..., 'name': ...} for every Google Spreadsheet
-    inside folder_id, including files in direct subfolders (one level of recursion
-    is enough for the Jan / Feb / March structure, but we recurse fully).
+    inside folder_id, recursing into subfolders (Jan/, Feb/, March/, Apr/, etc.).
     """
     results = []
 
@@ -106,7 +104,6 @@ def _list_spreadsheets_in_folder(drive_service, folder_id: str) -> list[dict]:
                 if mime == "application/vnd.google-apps.spreadsheet":
                     results.append({"id": f["id"], "name": f["name"]})
                 elif mime == "application/vnd.google-apps.folder":
-                    # recurse into subfolders (Jan, Feb, March, etc.)
                     _recurse(f["id"])
 
             page_token = resp.get("nextPageToken")
@@ -118,6 +115,23 @@ def _list_spreadsheets_in_folder(drive_service, folder_id: str) -> list[dict]:
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
+
+def get_discovered_months(sheet_map: dict) -> list[str]:
+    """
+    Return month keys (e.g. ['jan', 'feb', 'mar', 'apr']) that have at least
+    one per-month file discovered in the Drive folder.
+    """
+    discovered = []
+    for mon in ALL_MONTH_KEYS:
+        mon_up = mon.upper()
+        has_any = any(
+            sheet_map.get(f"SHEET_{mon_up}_{dt}", "")
+            for dt in ["EXPENSE", "MONTHLY", "PROJECTION", "TOUR", "VISITS"]
+        )
+        if has_any:
+            discovered.append(mon)
+    return discovered
+
 
 def discover_sheets(credentials, folder_id: str) -> dict:
     """
@@ -149,7 +163,6 @@ def discover_sheets(credentials, folder_id: str) -> dict:
             sheet_map[logical_key] = matched[0]["id"]
             print(f"[sheet_discovery]  {logical_key} → \"{matched[0]['name']}\"")
         elif len(matched) > 1:
-            # Prefer the most recently-named file (alphabetical last) as a tiebreak
             best = sorted(matched, key=lambda x: x["name"])[-1]
             sheet_map[logical_key] = best["id"]
             names = [m["name"] for m in matched]

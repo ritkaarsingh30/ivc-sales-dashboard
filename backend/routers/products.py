@@ -28,7 +28,7 @@ async def get_products():
 
     data = _get_data()
 
-    month_keys = ["jan", "feb", "mar"]
+    month_keys = list(data.keys())  # dynamic
 
     # Collect all products
     all_products = set()
@@ -118,6 +118,9 @@ async def get_products():
     q1_kpis = {
         "total_sales_eur": round(sum(month_sales.values()), 2),
         "total_units":     sum(month_units.values()),
+        "month_sales":     month_sales,
+        "month_units":     month_units,
+        # Backwards-compat aliases
         "jan_sales":  month_sales.get("jan", 0),
         "feb_sales":  month_sales.get("feb", 0),
         "mar_sales":  month_sales.get("mar", 0),

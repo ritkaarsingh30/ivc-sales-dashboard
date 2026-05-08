@@ -82,7 +82,7 @@ async def get_delegates():
         return cached
 
     data = _get_data()
-    month_keys = ["jan", "feb", "mar"]
+    month_keys = list(data.keys())  # dynamic — whatever months are loaded
 
     # ── Collect all unique delegate IDs ──────────────────────────────────────
     all_ids: set[str] = set()
@@ -201,10 +201,10 @@ async def get_delegates():
         avg_per_day.append(entry)
 
     ctc_ratios = [
-        {"mr": d["short_name"], "fullname": d["display_name"],
-         "jan": d["months"]["jan"]["ctc_ratio"],
-         "feb": d["months"]["feb"]["ctc_ratio"],
-         "mar": d["months"]["mar"]["ctc_ratio"]}
+        {
+            "mr": d["short_name"], "fullname": d["display_name"],
+            **{key: d["months"][key]["ctc_ratio"] for key in month_keys}
+        }
         for d in delegates_detail
     ]
 

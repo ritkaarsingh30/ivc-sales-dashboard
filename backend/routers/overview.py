@@ -1,5 +1,5 @@
 """
-GET /api/overview — Q1 summary, month comparison, product mix
+GET /api/overview — cross-month summary, product mix, comparison
 """
 import json
 import numpy as np
@@ -10,9 +10,14 @@ from cache.redis_client import get_api_cache, set_api_cache
 
 router = APIRouter()
 
+MONTH_FULL_NAMES = {
+    "jan": "January",   "feb": "February",  "mar": "March",     "apr": "April",
+    "may": "May",       "jun": "June",      "jul": "July",      "aug": "August",
+    "sep": "September", "oct": "October",   "nov": "November",  "dec": "December",
+}
+
 
 def safe_json(obj):
-    """Convert NaN/None floats to null for JSON serialization."""
     return json.loads(
         json.dumps(obj, default=lambda x: None if (isinstance(x, float) and np.isnan(x)) else x)
     )
@@ -27,7 +32,7 @@ def _sales_by_category(sales_df):
     if sales_df is None or sales_df.empty:
         return {"tablet": 0, "injectable": 0}
     tablet = sales_df[sales_df["Category"] == "TABLET"]["TOTAL_VALUE_EUR"].sum()
-    inj = sales_df[sales_df["Category"] == "INJECTABLE"]["TOTAL_VALUE_EUR"].sum()
+    inj    = sales_df[sales_df["Category"] == "INJECTABLE"]["TOTAL_VALUE_EUR"].sum()
     return {"tablet": round(float(tablet), 2), "injectable": round(float(inj), 2)}
 
 
@@ -39,7 +44,7 @@ def _total_sales(sales_dict):
 
 
 def _total_visits(visits_df):
-    if visits_df is None or hasattr(visits_df, "empty") and visits_df.empty:
+    if visits_df is None or (hasattr(visits_df, "empty") and visits_df.empty):
         return 0
     return int(len(visits_df))
 
@@ -55,8 +60,7 @@ def _avg_calls_per_day(monthly_dict):
     d = monthly_dict.get("delegates") if monthly_dict else None
     if d is None or d.empty:
         return None
-    val = d["AvgCallsPerDay"].sum()
-    return round(float(val), 2)
+    return round(float(d["AvgCallsPerDay"].sum()), 2)
 
 
 def _top_product(sales_df):
@@ -80,173 +84,153 @@ async def get_overview():
         return cached
 
     data = _get_data()
+    month_keys = list(data.keys())  # dynamic — whatever months are loaded
 
-    month_labels = {"jan": "January", "feb": "February", "mar": "March"}
-    month_colors = {"jan": "j", "feb": "f", "mar": "m"}
-
-    # Month comparison
+    # ── Month comparison (one entry per loaded month) ──────────────────────────
     month_comparison = []
-    for key, label in month_labels.items():
+    for key in month_keys:
+        label = MONTH_FULL_NAMES.get(key, key.capitalize())
         d = data.get(key, {})
-        sales = d.get("sales", {})
+        sales   = d.get("sales", {})
         monthly = d.get("monthly", {})
         expense = d.get("expense", {}) or {}
-        visits = d.get("visits")
+        visits  = d.get("visits")
         proj_dict = d.get("projection", {}) or {}
 
         total_s = _total_sales(sales)
-        proj_s = _month_projection(proj_dict)
+        proj_s  = _month_projection(proj_dict)
         ach_pct = round(total_s / proj_s * 100, 1) if proj_s and proj_s > 0 else None
 
-        current_sales = sales.get("current")
-        prev_sales = sales.get("prev")
-        tcalls = 0
-        pcalls = 0
-        phcalls = 0
+        tcalls = pcalls = phcalls = 0
         acts = monthly.get("delegates") if monthly else None
         if acts is not None and not acts.empty:
-            tcalls = int(acts["TotalCalls"].sum())
-            pcalls = int(acts["Prescriber"].sum())
+            tcalls  = int(acts["TotalCalls"].sum())
+            pcalls  = int(acts["Prescriber"].sum())
             phcalls = int(acts["PharmacyCalls"].sum())
+            active_delegates = int((acts["TotalCalls"] > 0).sum())
+        else:
+            active_delegates = 0
 
         opening_bal = expense.get("opening_balance_fcfa", 0)
         closing_bal = expense.get("balance_fcfa", 0)
-        spent = expense.get("total_spent_fcfa", 0)
-        received = expense.get("total_received_fcfa", 0)
-
-        # Count active delegates (non-CM, non-zero calls)
-        active_delegates = 0
-        if acts is not None and not acts.empty:
-            active_delegates = int((acts["TotalCalls"] > 0).sum())
+        spent       = expense.get("total_spent_fcfa", 0)
+        received    = expense.get("total_received_fcfa", 0)
 
         month_comparison.append({
-            "month": label,
-            "sales": total_s,
-            "projection": proj_s,
-            "achievement": ach_pct,
-            "visits": _total_visits(visits),
-            "prescriber_calls": pcalls,
-            "pharmacy_calls": phcalls,
-            "drs_converted": _drs_converted(monthly),
-            "avg_visits_day": _avg_calls_per_day(monthly),
+            "key":               key,
+            "month":             label,
+            "sales":             total_s,
+            "projection":        proj_s,
+            "achievement":       ach_pct,
+            "visits":            _total_visits(visits),
+            "prescriber_calls":  pcalls,
+            "pharmacy_calls":    phcalls,
+            "drs_converted":     _drs_converted(monthly),
+            "avg_visits_day":    _avg_calls_per_day(monthly),
             "activity_spent_fcfa": round(float(spent), 2),
-            "activity_spent_eur": round(float(spent) / FCFA_TO_EUR, 2),
+            "activity_spent_eur":  round(float(spent) / FCFA_TO_EUR, 2),
             "opening_balance_eur": round(float(opening_bal) / FCFA_TO_EUR, 2) if opening_bal else None,
             "closing_balance_eur": round(float(closing_bal) / FCFA_TO_EUR, 2),
-            "received_fcfa": round(float(received), 2),
-            "active_delegates": active_delegates,
-            "top_product": _top_product(sales.get("current")),
+            "received_fcfa":       round(float(received), 2),
+            "active_delegates":    active_delegates,
+            "top_product":         _top_product(sales.get("current")),
         })
 
-    # Q1 sales per month
-    jan_s = month_comparison[0]["sales"] if month_comparison else 0
-    feb_s = month_comparison[1]["sales"] if len(month_comparison) > 1 else 0
-    mar_s = month_comparison[2]["sales"] if len(month_comparison) > 2 else 0
+    # ── Cross-month aggregates ─────────────────────────────────────────────────
+    total_sales_all = sum(m["sales"] for m in month_comparison)
 
-    # Best month by sales
-    best_month = "January"
-    best_val = jan_s
-    if feb_s > best_val: best_month, best_val = "February", feb_s
-    if mar_s > best_val: best_month, best_val = "March", mar_s
+    best = max(month_comparison, key=lambda m: m["sales"], default={"month": "N/A", "sales": 0})
+    best_month, best_val = best["month"], best["sales"]
 
-    # Top product across Q1
+    # Top product across all loaded months
     all_sales_dfs = []
-    for key in ["jan", "feb", "mar"]:
-        d = data.get(key, {})
-        s = d.get("sales", {}).get("current")
+    for key in month_keys:
+        s = data.get(key, {}).get("sales", {}).get("current")
         if s is not None and not s.empty:
             all_sales_dfs.append(s)
-    top_product_q1 = "N/A"
+
+    top_product_all = "N/A"
+    top_product_all_val = 0
     if all_sales_dfs:
         import pandas as _pd
         combined = _pd.concat(all_sales_dfs)
         if not combined.empty:
             grp = combined.groupby("Product")["TOTAL_VALUE_EUR"].sum()
-            top_product_q1 = grp.idxmax()
-            top_product_q1_val = round(float(grp.max()), 2)
-        else:
-            top_product_q1_val = 0
-    else:
-        top_product_q1_val = 0
+            top_product_all     = grp.idxmax()
+            top_product_all_val = round(float(grp.max()), 2)
 
-    # Annual target from env
-    annual_target_eur = 205000  # €205K as per constants
-    q1_total = round(jan_s + feb_s + mar_s, 2)
-    annual_achievement_pct = round(q1_total / annual_target_eur * 100, 1) if annual_target_eur else None
+    annual_target_eur = 205000
+    annual_achievement_pct = round(total_sales_all / annual_target_eur * 100, 1) if annual_target_eur else None
 
-    # Total visits Q1 & per delegate aggregation for pie chart
-    delegate_visits_q1 = {}
-    for key in ["jan", "feb", "mar"]:
-        d = data.get(key, {})
-        visits = d.get("visits")
+    # Per-delegate visits across all months
+    delegate_visits_all = {}
+    for key in month_keys:
+        visits = data.get(key, {}).get("visits")
         if visits is not None and hasattr(visits, "empty") and not visits.empty and "MR" in visits.columns:
             for mr, cnt in visits.groupby("MR").size().items():
-                delegate_visits_q1[mr] = delegate_visits_q1.get(mr, 0) + int(cnt)
+                delegate_visits_all[mr] = delegate_visits_all.get(mr, 0) + int(cnt)
+
+    # Build dynamic per-month dicts for summary (used by frontend overview charts)
+    month_sales_by_key     = {m["key"]: m["sales"]         for m in month_comparison}
+    month_visits_by_key    = {m["key"]: m["visits"]        for m in month_comparison}
+    month_drs_by_key       = {m["key"]: m["drs_converted"] for m in month_comparison}
+    month_avg_cpd_by_key   = {m["key"]: m["avg_visits_day"]for m in month_comparison}
+    month_achievement_by_key = {m["key"]: m["achievement"] for m in month_comparison}
 
     q1_summary = {
-        "total_sales_eur": round(jan_s + feb_s + mar_s, 2),
-        "jan_sales": jan_s,
-        "feb_sales": feb_s,
-        "mar_sales": mar_s,
-        "jan_achievement_pct": month_comparison[0]["achievement"] if month_comparison else None,
-        "feb_achievement_pct": month_comparison[1]["achievement"] if len(month_comparison) > 1 else None,
-        "mar_achievement_pct": month_comparison[2]["achievement"] if len(month_comparison) > 2 else None,
-        "annual_target_eur": annual_target_eur,
+        "total_sales_eur":        round(total_sales_all, 2),
+        "month_sales":            month_sales_by_key,
+        "month_achievement_pct":  month_achievement_by_key,
+        "annual_target_eur":      annual_target_eur,
         "annual_achievement_pct": annual_achievement_pct,
-        "best_month": best_month,
-        "best_month_sales": round(best_val, 2),
-        "top_product_q1": top_product_q1,
-        "top_product_q1_val": top_product_q1_val,
-        "total_visits": {
-            "jan": month_comparison[0]["visits"] if month_comparison else 0,
-            "feb": month_comparison[1]["visits"] if len(month_comparison) > 1 else 0,
-            "mar": month_comparison[2]["visits"] if len(month_comparison) > 2 else 0,
-        },
-        "total_visits_q1": sum([
-            month_comparison[0]["visits"] if month_comparison else 0,
-            month_comparison[1]["visits"] if len(month_comparison) > 1 else 0,
-            month_comparison[2]["visits"] if len(month_comparison) > 2 else 0,
-        ]),
-        "drs_converted": {
-            "jan": month_comparison[0]["drs_converted"] if month_comparison else 0,
-            "feb": month_comparison[1]["drs_converted"] if len(month_comparison) > 1 else 0,
-            "mar": month_comparison[2]["drs_converted"] if len(month_comparison) > 2 else 0,
-        },
-        "drs_converted_q1": sum([
-            month_comparison[0]["drs_converted"] if month_comparison else 0,
-            month_comparison[1]["drs_converted"] if len(month_comparison) > 1 else 0,
-            month_comparison[2]["drs_converted"] if len(month_comparison) > 2 else 0,
-        ]),
-        "delegate_visits_q1": [{ "delegate": k, "visits": v } for k, v in sorted(delegate_visits_q1.items(), key=lambda x: -x[1])],
-        "avg_calls_per_day": {
-            "jan": month_comparison[0]["avg_visits_day"] if month_comparison else None,
-            "feb": month_comparison[1]["avg_visits_day"] if len(month_comparison) > 1 else None,
-            "mar": month_comparison[2]["avg_visits_day"] if len(month_comparison) > 2 else None,
-        },
+        "best_month":             best_month,
+        "best_month_sales":       round(best_val, 2),
+        "top_product_all":        top_product_all,
+        "top_product_all_val":    top_product_all_val,
+        "total_visits":           month_visits_by_key,
+        "total_visits_all":       sum(month_visits_by_key.values()),
+        "drs_converted":          month_drs_by_key,
+        "drs_converted_all":      sum(month_drs_by_key.values()),
+        "avg_calls_per_day":      month_avg_cpd_by_key,
+        "delegate_visits_all":    [
+            {"delegate": k, "visits": v}
+            for k, v in sorted(delegate_visits_all.items(), key=lambda x: -x[1])
+        ],
+        # Backwards-compat aliases (jan/feb/mar)
+        "jan_sales":              month_sales_by_key.get("jan", 0),
+        "feb_sales":              month_sales_by_key.get("feb", 0),
+        "mar_sales":              month_sales_by_key.get("mar", 0),
+        "jan_achievement_pct":    month_achievement_by_key.get("jan"),
+        "feb_achievement_pct":    month_achievement_by_key.get("feb"),
+        "mar_achievement_pct":    month_achievement_by_key.get("mar"),
+        "top_product_q1":         top_product_all,
+        "top_product_q1_val":     top_product_all_val,
+        "total_visits_q1":        sum(month_visits_by_key.values()),
+        "drs_converted_q1":       sum(month_drs_by_key.values()),
+        "delegate_visits_q1":     [
+            {"delegate": k, "visits": v}
+            for k, v in sorted(delegate_visits_all.items(), key=lambda x: -x[1])
+        ],
     }
 
-    # Product mix
+    # ── Product mix by month ───────────────────────────────────────────────────
     product_mix = {}
-    for key in ["jan", "feb", "mar"]:
+    for key in month_keys:
         d = data.get(key, {})
-        sales = d.get("sales", {})
-        current = sales.get("current")
-        product_mix[key] = _sales_by_category(current)
+        product_mix[key] = _sales_by_category(d.get("sales", {}).get("current"))
 
-    # All products Q1 trend (for grouped bar)
-    all_products = set()
-    for key in ["jan", "feb", "mar"]:
-        d = data.get(key, {})
-        s = d.get("sales", {}).get("current")
+    # ── All-products trend across months ──────────────────────────────────────
+    all_products: set = set()
+    for key in month_keys:
+        s = data.get(key, {}).get("sales", {}).get("current")
         if s is not None and not s.empty:
             all_products.update(s["Product"].tolist())
 
     all_products_trend = []
     for prod in sorted(all_products):
         entry = {"product": prod}
-        for key, label in month_labels.items():
-            d = data.get(key, {})
-            s = d.get("sales", {}).get("current")
+        for key in month_keys:
+            s = data.get(key, {}).get("sales", {}).get("current")
             if s is not None and not s.empty:
                 row = s[s["Product"] == prod]
                 entry[key] = round(float(row["TOTAL_VALUE_EUR"].iloc[0]), 2) if not row.empty else 0
@@ -255,10 +239,11 @@ async def get_overview():
         all_products_trend.append(entry)
 
     result = safe_json({
-        "q1_summary": q1_summary,
-        "month_comparison": month_comparison,
-        "product_mix": product_mix,
+        "q1_summary":         q1_summary,
+        "month_comparison":   month_comparison,
+        "product_mix":        product_mix,
         "all_products_trend": all_products_trend,
+        "months_loaded":      month_keys,
     })
     await set_api_cache("overview", result)
     return result

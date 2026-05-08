@@ -30,7 +30,12 @@ async def get_expenses():
 
     data = _get_data()
 
-    month_labels = {"jan": "January", "feb": "February", "mar": "March"}
+    _MONTH_NAMES = {
+        "jan": "January", "feb": "February", "mar": "March",    "apr": "April",
+        "may": "May",     "jun": "June",     "jul": "July",     "aug": "August",
+        "sep": "September","oct": "October", "nov": "November", "dec": "December",
+    }
+    month_labels = {k: _MONTH_NAMES.get(k, k.capitalize()) for k in data.keys()}
 
     # Budget flow
     budget_flow = []

@@ -32,28 +32,29 @@ class NaNEncoder(json.JSONEncoder):
             return str(obj)
         return super().default(obj)
 
-SHEET_DEPENDENCIES = {
-    "SHEET_SALES": ["overview", "months:jan", "months:feb", "months:mar", "products", "delegates", "expenses", "insights"],
-    "SHEET_COPY_REPORT": ["overview", "months:jan", "months:feb", "months:mar", "products", "insights"],
-    
-    "SHEET_JAN_EXPENSE": ["overview", "months:jan", "expenses", "insights"],
-    "SHEET_JAN_MONTHLY": ["months:jan", "delegates", "insights"],
-    "SHEET_JAN_PROJECTION": ["months:jan", "products", "overview", "insights"],
-    "SHEET_JAN_TOUR": ["months:jan", "delegates", "insights"],
-    "SHEET_JAN_VISITS": ["months:jan", "delegates", "insights"],
+def build_sheet_dependencies(month_keys: list[str]) -> dict[str, list[str]]:
+    """
+    Build the sheet→API-endpoint dependency map for a given set of active months.
+    Call this after discovering which months are loaded, then store the result in
+    app_state["sheet_dependencies"] so the refresh endpoint can use it.
+    """
+    month_endpoints = [f"months:{k}" for k in month_keys]
+    deps: dict[str, list[str]] = {
+        "SHEET_SALES":       ["overview", "products", "delegates", "expenses", "insights"] + month_endpoints,
+        "SHEET_COPY_REPORT": ["overview", "products", "insights"] + month_endpoints,
+    }
+    for mon in month_keys:
+        mon_up = mon.upper()
+        deps[f"SHEET_{mon_up}_EXPENSE"]    = ["overview", f"months:{mon}", "expenses", "insights"]
+        deps[f"SHEET_{mon_up}_MONTHLY"]    = [f"months:{mon}", "delegates", "insights"]
+        deps[f"SHEET_{mon_up}_PROJECTION"] = [f"months:{mon}", "products", "overview", "insights"]
+        deps[f"SHEET_{mon_up}_TOUR"]       = [f"months:{mon}", "delegates", "insights"]
+        deps[f"SHEET_{mon_up}_VISITS"]     = [f"months:{mon}", "delegates", "insights"]
+    return deps
 
-    "SHEET_FEB_EXPENSE": ["overview", "months:feb", "expenses", "insights"],
-    "SHEET_FEB_MONTHLY": ["months:feb", "delegates", "insights"],
-    "SHEET_FEB_PROJECTION": ["months:feb", "products", "overview", "insights"],
-    "SHEET_FEB_TOUR": ["months:feb", "delegates", "insights"],
-    "SHEET_FEB_VISITS": ["months:feb", "delegates", "insights"],
 
-    "SHEET_MAR_EXPENSE": ["overview", "months:mar", "expenses", "insights"],
-    "SHEET_MAR_MONTHLY": ["months:mar", "delegates", "insights"],
-    "SHEET_MAR_PROJECTION": ["months:mar", "products", "overview", "insights"],
-    "SHEET_MAR_TOUR": ["months:mar", "delegates", "insights"],
-    "SHEET_MAR_VISITS": ["months:mar", "delegates", "insights"],
-}
+# Kept for backwards-compat with local mode (static, jan/feb/mar only)
+SHEET_DEPENDENCIES = build_sheet_dependencies(["jan", "feb", "mar"])
 
 async def get_api_cache(key: str) -> dict | None:
     try:

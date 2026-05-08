@@ -11,8 +11,6 @@ from cache.redis_client import get_api_cache, set_api_cache
 
 router = APIRouter()
 
-VALID_MONTHS = {"jan", "feb", "mar"}
-
 
 def safe_json(obj):
     return json.loads(
@@ -27,8 +25,13 @@ def _get_data():
 
 @router.get("/months/{month}")
 async def get_month(month: str):
-    if month not in VALID_MONTHS:
-        raise HTTPException(status_code=404, detail=f"Month '{month}' not found. Use jan/feb/mar.")
+    data = _get_data()
+    if month not in data:
+        available = list(data.keys())
+        raise HTTPException(
+            status_code=404,
+            detail=f"Month '{month}' not loaded. Available: {available}",
+        )
 
     cache_key = f"months:{month}"
     cached = await get_api_cache(cache_key)
