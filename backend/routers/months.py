@@ -142,8 +142,9 @@ async def get_month(month: str):
             total_orders = _safe_float(row.get("TotalOrders", 0))
             ctc = _safe_float(row.get("CTC", 0))
             ctc_ratio = round(ctc / total_orders * 100, 1) if total_orders > 0 else None
+            mr_id = row.get("Delegate", "")
             delegate_table.append({
-                "name": row.get("Delegate", ""),
+                "name": mr_display_name(mr_id) if mr_id else "",
                 "territory": row.get("Territory", ""),
                 "total_calls": _safe_int(row.get("TotalCalls", 0)),
                 "prescriber": _safe_int(row.get("Prescriber", 0)),
@@ -157,19 +158,18 @@ async def get_month(month: str):
                 "ctc_ratio": ctc_ratio,
             })
 
-    # ── Distributor Sales ──
     distributor_sales = []
     if current_sales is not None and not current_sales.empty:
         total_s = current_sales["TOTAL_VALUE_EUR"].sum()
         for dist in DISTRIBUTORS:
-            col = f"{dist}_SALES"
+            eur_col = f"{dist}_SALES_EUR"
             closing_col = f"{dist}_CLOSING"
-            if col in current_sales.columns:
-                dist_sales = float(current_sales[col].sum())
+            if eur_col in current_sales.columns:
+                dist_sales = float(current_sales[eur_col].sum())
                 # Closing stock: RATE * closing qty
                 if closing_col in current_sales.columns:
                     closing_val = (current_sales[closing_col] * current_sales["RATE"]).sum()
-                    closing_eur = round(float(closing_val) / FCFA_TO_EUR, 2)
+                    closing_eur = round(float(closing_val), 2)
                 else:
                     closing_eur = 0
                 share_pct = round(dist_sales / float(total_s) * 100, 1) if total_s > 0 else 0
@@ -200,8 +200,8 @@ async def get_month(month: str):
     call_breakdown = {"labels": [], "prescriber": [], "non_prescriber": [], "pharmacy": []}
     if delegates_df is not None and not delegates_df.empty:
         for _, row in delegates_df.iterrows():
-            name = row.get("Delegate", "")
-            # Shorten name
+            mr_id = row.get("Delegate", "")
+            name = mr_display_name(mr_id) if mr_id else mr_id
             short = name.split()[-1] if name else name
             call_breakdown["labels"].append(short)
             call_breakdown["prescriber"].append(_safe_int(row.get("Prescriber", 0)))
@@ -273,6 +273,40 @@ async def get_month(month: str):
             "entries_by_delegate": entries_by_delegate,
         }
 
+    # ── Visit Tracker ──
+    visit_tracker = {"by_delegate": []}
+    if visits_df is not None and hasattr(visits_df, "empty") and not visits_df.empty:
+        vt_delegates = []
+        for mr_id_key, grp in visits_df.groupby("MR_ID"):
+            mr_name = (
+                mr_display_name(mr_id_key)
+                if mr_id_key not in ("UNKNOWN", "")
+                else (str(grp["MR"].iloc[0]) if not grp.empty else mr_id_key)
+            )
+            visits_list = []
+            for _, vrow in grp.iterrows():
+                date_val = vrow.get("Visit_Date")
+                date_str = str(date_val)[:10] if date_val is not None and str(date_val) not in ("NaT", "nan", "") else ""
+                if not date_str:
+                    continue
+                visits_list.append({
+                    "date":       date_str,
+                    "doctor":     str(vrow.get("Doctor",     "")),
+                    "speciality": str(vrow.get("Speciality", "")),
+                    "clinic":     str(vrow.get("Clinic",     "")),
+                })
+            if not visits_list:
+                continue
+            vt_delegates.append({
+                "mr":             mr_name,
+                "mr_id":          mr_id_key,
+                "total_visits":   len(visits_list),
+                "unique_doctors": len(set(v["doctor"] for v in visits_list)),
+                "visits":         visits_list,
+            })
+        vt_delegates.sort(key=lambda x: x["total_visits"], reverse=True)
+        visit_tracker = {"by_delegate": vt_delegates}
+
     result = safe_json({
         "month":              month,
         "kpis":               kpis,
@@ -283,6 +317,7 @@ async def get_month(month: str):
         "activity_expenses":  activity_expenses,
         "call_breakdown":     call_breakdown,
         "tour_plan":          tour_plan,
+        "visit_tracker":      visit_tracker,
     })
     await set_api_cache(cache_key, result)
     return result

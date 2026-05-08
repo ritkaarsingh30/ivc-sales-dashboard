@@ -6,6 +6,7 @@ import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
 import Badge from '../components/Badge'
 import TourPlanSection from '../components/TourPlanSection'
+import VisitTrackerSection from '../components/VisitTrackerSection'
 import { baseOptions, COLORS } from '../utils/chartConfig'
 import { MONTH_CONFIG, calcChange, fmtChange, changeDir } from '../utils/monthConfig'
 
@@ -45,6 +46,7 @@ export default function MarTab() {
   const ae = data.activity_expenses || []
   const ds = data.distributor_sales || []
   const tp = data.tour_plan || {}
+  const vt = data.visit_tracker || {}
 
   // Dynamic changes from prev month
   const chgSales  = calcChange(k.total_sales_eur,      pk.total_sales_eur)
@@ -190,6 +192,7 @@ export default function MarTab() {
       <DataTable title={`Sales by Distributor — ${CFG.label} 2026`} borderColor={CFG.color} columns={dsCols} rows={dsRows} />
 
       <TourPlanSection tourPlan={tp} cfg={CFG} />
+      <VisitTrackerSection visitTracker={vt} cfg={CFG} />
     </div>
   )
 }

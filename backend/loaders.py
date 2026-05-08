@@ -277,7 +277,11 @@ def load_sales(file_bytes: bytes = None, current_sheet: str = None,
                 rec[f"{dist}_CLOSING"] = safe_num(row.iloc[dc["closing"]]) if "closing" in dc else 0.0
                 rec[f"{dist}_ORDER"]   = safe_num(row.iloc[dc["order"]])   if "order"   in dc else 0.0
             rec["TOTAL_SALES"]     = sum(rec[f"{d}_SALES"] for d in DISTRIBUTORS)
-            rec["TOTAL_VALUE_EUR"] = safe_num(row.iloc[tval_col]) if tval_col is not None else 0.0
+            # EUR value = RATE (€/unit) × total units sold
+            rec["TOTAL_VALUE_EUR"] = round(rate * rec["TOTAL_SALES"], 2)
+            # Per-distributor EUR values
+            for d in DISTRIBUTORS:
+                rec[f"{d}_SALES_EUR"] = round(rate * rec[f"{d}_SALES"], 2)
             rows.append(rec)
 
         results[key] = pd.DataFrame(rows)
