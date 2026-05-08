@@ -5,6 +5,7 @@ import SectionLabel from '../components/SectionLabel'
 import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
 import Badge from '../components/Badge'
+import TourPlanSection from '../components/TourPlanSection'
 import { baseOptions, COLORS } from '../utils/chartConfig'
 import { MONTH_CONFIG, calcChange, fmtChange, changeDir } from '../utils/monthConfig'
 
@@ -37,6 +38,7 @@ export default function FebTab() {
   const dt = data.delegate_table || []
   const ae = data.activity_expenses || []
   const ds = data.distributor_sales || []
+  const tp = data.tour_plan || {}
 
   // Compute all changes dynamically from prev month data
   const chgSales  = calcChange(k.total_sales_eur,    pk.total_sales_eur)
@@ -46,7 +48,6 @@ export default function FebTab() {
   const chgPres   = calcChange(k.prescriber_calls,    pk.prescriber_calls)
   const chgPharm  = calcChange(k.pharmacy_calls,      pk.pharmacy_calls)
   const chgDrs    = calcChange(k.drs_converted,       pk.drs_converted)
-  const chgAvg    = calcChange(k.avg_visits_day,      pk.avg_visits_day)
 
   const tvaData = {
     labels: tva.map(r => r.product),
@@ -80,7 +81,6 @@ export default function FebTab() {
     { key: 'total_calls', label: 'Total Calls' }, { key: 'prescriber', label: 'Prescriber' },
     { key: 'non_prescriber', label: 'Non-Pres.' }, { key: 'pharmacy', label: 'Pharmacy' },
     { key: 'drs_converted', label: 'Drs Conv.' }, { key: 'days_worked', label: 'Days' },
-    { key: 'avg_per_day', label: 'Avg/Day' },
   ]
 
   const aeCols = [
@@ -122,8 +122,6 @@ export default function FebTab() {
           change={fmtChange(chgPharm)} changeDir={changeDir(chgPharm)} monthColor={CFG.cls} />
         <KpiCard label="Drs Converted"     value={k.drs_converted ?? 0}
           change={fmtChange(chgDrs)} changeDir={changeDir(chgDrs)} monthColor={k.drs_converted > 0 ? 'g' : 'd'} />
-        <KpiCard label="Avg Visits/Day"    value={k.avg_visits_day ?? '—'}
-          change={fmtChange(chgAvg)} changeDir={changeDir(chgAvg)} monthColor={CFG.cls} />
         <KpiCard label="Activity Received" value={`€${(k.activity_received_eur||0).toLocaleString()}`}
           sub={`FCFA ${(k.activity_received_fcfa||0).toLocaleString()}`} monthColor={CFG.cls} />
         <KpiCard label="Activity Spent"    value={`€${(k.activity_spent_eur||0).toLocaleString()}`}
@@ -165,6 +163,8 @@ export default function FebTab() {
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="DISTRIBUTOR-WISE SALES" monthColor={CFG.sectionCls} />
       <DataTable title={`Sales by Distributor — ${CFG.label} 2026`} borderColor={CFG.color} columns={dsCols} rows={dsRows} />
+
+      <TourPlanSection tourPlan={tp} cfg={CFG} />
     </div>
   )
 }

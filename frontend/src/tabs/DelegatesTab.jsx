@@ -1,145 +1,334 @@
 import { Bar, Line } from 'react-chartjs-2'
 import { useDelegates } from '../hooks/useDashboard'
+import KpiCard from '../components/KpiCard'
 import SectionLabel from '../components/SectionLabel'
 import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
-import { baseOptions, COLORS } from '../utils/chartConfig'
+import Badge from '../components/Badge'
+import { baseOptions, COLORS, PALETTE } from '../utils/chartConfig'
 
-function ctcColor(ratio) {
-  if (ratio === null || ratio === undefined) return COLORS.neutral
-  if (ratio > 100) return COLORS.danger
-  if (ratio > 50) return COLORS.warn
-  return COLORS.good
+/* ── helpers ─────────────────────────────────────────────── */
+const fmtEur = n => (n != null && n !== 0) ? `€${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'
+const fmtPct = n => n != null ? `${n}%` : '—'
+
+function ctcVariant(r) {
+  if (r == null) return 'n'
+  if (r <= 25)  return 'g'
+  if (r <= 60)  return 'w'
+  return 'd'
+}
+function ctcColor(r) {
+  if (r == null) return COLORS.neutral
+  if (r <= 25)  return COLORS.good
+  if (r <= 60)  return COLORS.warn
+  return COLORS.danger
 }
 
+const DEL_COLORS = [
+  { solid: 'rgba(59,130,246,1)',  soft: 'rgba(59,130,246,0.55)'  },
+  { solid: 'rgba(245,158,11,1)', soft: 'rgba(245,158,11,0.55)' },
+  { solid: 'rgba(16,185,129,1)', soft: 'rgba(16,185,129,0.55)' },
+  { solid: 'rgba(168,85,247,1)', soft: 'rgba(168,85,247,0.55)' },
+  { solid: 'rgba(236,72,153,1)', soft: 'rgba(236,72,153,0.55)' },
+  { solid: 'rgba(251,146,60,1)', soft: 'rgba(251,146,60,0.55)' },
+]
+
+/* ── Scorecard card ──────────────────────────────────────── */
+function DelegateScorecard({ d, color }) {
+  const q = d.q1
+  const utilPct = q.days_utilization ?? 0
+  const ctcRatio = q.ctc_ratio
+  const variant = ctcVariant(ctcRatio)
+
+  return (
+    <div style={{
+      background: 'var(--card)', border: '1px solid var(--border)',
+      borderRadius: '10px', padding: '18px 20px',
+      borderTop: `3px solid ${color.solid}`,
+      display: 'flex', flexDirection: 'column', gap: '12px',
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 700, color: color.solid, letterSpacing: '0.5px' }}>
+            {d.display_name}
+          </div>
+          <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+            {d.territory}
+          </div>
+        </div>
+        <Badge text={`CTC ${fmtPct(ctcRatio)}`} variant={variant} />
+      </div>
+
+      {/* Activity row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
+        {[
+          ['Q1 Calls',   q.calls],
+          ['Drs Conv.',  q.drs_converted],
+          ['Conv. Rate', fmtPct(q.conversion_pct)],
+        ].map(([lbl, val]) => (
+          <div key={lbl} style={{ background: 'var(--bg)', borderRadius: '6px', padding: '8px 10px' }}>
+            <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '4px' }}>{lbl}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '16px', fontWeight: 600, color: 'var(--text)' }}>{val ?? '—'}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Financial row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '8px' }}>
+        {[
+          ['Q1 Orders', fmtEur(q.orders_eur), q.orders_eur > 0 ? COLORS.good : 'var(--text)'],
+          ['Q1 CTC',    fmtEur(q.ctc_eur),    ctcColor(ctcRatio)],
+        ].map(([lbl, val, clr]) => (
+          <div key={lbl} style={{ background: 'var(--bg)', borderRadius: '6px', padding: '8px 10px' }}>
+            <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '4px' }}>{lbl}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '15px', fontWeight: 600, color: clr }}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Days & Tour coverage row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '8px' }}>
+        {[
+          ['Days Worked', `${q.days_worked} / ${q.days_target}`],
+          ['Tour Coverage', fmtPct(q.tour_coverage_pct)],
+        ].map(([lbl, val]) => (
+          <div key={lbl} style={{ background: 'var(--bg)', borderRadius: '6px', padding: '8px 10px' }}>
+            <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '4px' }}>{lbl}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>{val ?? '—'}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Days utilization bar */}
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-muted)', marginBottom: '4px' }}>
+          <span>DAYS UTILIZATION</span>
+          <span style={{ fontFamily: 'var(--mono)', color: utilPct >= 90 ? COLORS.good : utilPct >= 70 ? COLORS.warn : COLORS.danger }}>
+            {fmtPct(utilPct)}
+          </span>
+        </div>
+        <div style={{ height: '5px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
+          <div style={{
+            height: '100%', borderRadius: '3px',
+            width: `${Math.min(utilPct, 100)}%`,
+            background: utilPct >= 90 ? COLORS.good : utilPct >= 70 ? COLORS.warn : COLORS.danger,
+            transition: 'width 0.4s ease',
+          }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── Main tab ────────────────────────────────────────────── */
 export default function DelegatesTab() {
   const { data, isLoading, isError } = useDelegates()
   if (isLoading) return <div className="loading">⟳ Loading delegates data...</div>
-  if (isError) return <div className="error">✕ Failed to load delegates data. Is the backend running?</div>
+  if (isError)   return <div className="error">✕ Failed to load delegates data. Is the backend running?</div>
 
-  const vc = data.visit_counts || []
-  const orders = data.orders || []
-  const apd = data.avg_per_day || []
-  const ctc = data.ctc_ratios || []
+  const dls  = data.delegates    || []
+  const summ = data.q1_summary   || {}
+  const ctcR = data.ctc_ratios   || []
 
-  // Visit counts grouped bar
-  const vcData = {
-    labels: vc.map(r => r.mr),
+  const names  = dls.map(d => d.short_name || d.display_name)   // chart labels
+  const labels = dls.map(d => d.display_name)                    // table / scorecard
+
+  /* ── Calls trend (grouped bar per delegate) ── */
+  const callsTrendData = {
+    labels: names,
     datasets: [
-      { label: 'January',  data: vc.map(r => r.jan || 0), backgroundColor: COLORS.janA, borderColor: COLORS.jan, borderWidth: 1 },
-      { label: 'February', data: vc.map(r => r.feb || 0), backgroundColor: COLORS.febA, borderColor: COLORS.feb, borderWidth: 1 },
-      { label: 'March',    data: vc.map(r => r.mar || 0), backgroundColor: COLORS.marA, borderColor: COLORS.mar, borderWidth: 1 },
-    ]
+      { label: 'January',  data: dls.map(d => d.months.jan?.calls || 0), backgroundColor: COLORS.janA, borderColor: COLORS.jan, borderWidth: 1, borderRadius: 3 },
+      { label: 'February', data: dls.map(d => d.months.feb?.calls || 0), backgroundColor: COLORS.febA, borderColor: COLORS.feb, borderWidth: 1, borderRadius: 3 },
+      { label: 'March',    data: dls.map(d => d.months.mar?.calls || 0), backgroundColor: COLORS.marA, borderColor: COLORS.mar, borderWidth: 1, borderRadius: 3 },
+    ],
   }
 
-  // Orders bar
-  const ordData = {
-    labels: orders.map(r => r.mr),
-    datasets: [
-      { label: 'Jan (€)', data: orders.map(r => r.jan_eur || 0), backgroundColor: COLORS.janA },
-      { label: 'Mar (€)', data: orders.map(r => r.mar_eur || 0), backgroundColor: COLORS.marA },
-    ]
-  }
-
-  // Avg calls/day line
-  const monthLabels = apd.map(r => r.month)
-  const delegateNames = vc.length > 0
-    ? Object.keys(apd[0] || {}).filter(k => k !== 'month' && k !== 'overall')
-    : []
-
-  const delegateColors = [COLORS.jan, COLORS.feb, COLORS.mar, COLORS.q1, COLORS.pink, COLORS.sky]
-  const apdDatasets = [
-    { label: 'Overall', data: apd.map(r => r.overall), borderColor: COLORS.neutral, backgroundColor: 'transparent', borderDash: [4,2], tension: 0.3 },
-    ...delegateNames.map((name, i) => ({
-      label: name.toUpperCase(),
-      data: apd.map(r => r[name]),
-      borderColor: delegateColors[i % delegateColors.length],
+  /* ── Drs Converted trend (line per delegate) ── */
+  const drsData = {
+    labels: ['January', 'February', 'March'],
+    datasets: dls.map((d, i) => ({
+      label: d.display_name,
+      data: ['jan','feb','mar'].map(k => d.months[k]?.drs_converted || 0),
+      borderColor: DEL_COLORS[i % DEL_COLORS.length].solid,
       backgroundColor: 'transparent',
-      tension: 0.3,
-    }))
-  ]
-
-  const apdData = { labels: monthLabels, datasets: apdDatasets }
-
-  // CTC ratio bar
-  const ctcLabels = ctc.map(r => r.mr)
-  const ctcJan = ctc.map(r => r.jan)
-  const ctcFeb = ctc.map(r => r.feb)
-  const ctcMar = ctc.map(r => r.mar)
-
-  const ctcData = {
-    labels: ctcLabels,
-    datasets: [
-      { label: 'January CTC %',  data: ctcJan, backgroundColor: ctcJan.map(v => ctcColor(v) + '99'), borderColor: ctcJan.map(v => ctcColor(v)), borderWidth: 1 },
-      { label: 'February CTC %', data: ctcFeb, backgroundColor: ctcFeb.map(v => ctcColor(v) + '55'), borderColor: ctcFeb.map(v => ctcColor(v)), borderWidth: 1 },
-      { label: 'March CTC %',    data: ctcMar, backgroundColor: ctcMar.map(v => ctcColor(v) + '99'), borderColor: ctcMar.map(v => ctcColor(v)), borderWidth: 1 },
-    ]
+      tension: 0.35,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+    })),
   }
 
-  const ctcOptions = {
+  /* ── Orders vs CTC (grouped horizontal bar) — the KEY chart ── */
+  const roiData = {
+    labels: names,
+    datasets: [
+      {
+        label: 'Q1 Orders (€)',
+        data: dls.map(d => d.q1.orders_eur || 0),
+        backgroundColor: 'rgba(34,197,94,0.6)',
+        borderColor:     'rgba(34,197,94,1)',
+        borderWidth: 1, borderRadius: 3,
+      },
+      {
+        label: 'Q1 CTC (€)',
+        data: dls.map(d => d.q1.ctc_eur || 0),
+        backgroundColor: 'rgba(239,68,68,0.55)',
+        borderColor:     'rgba(239,68,68,0.9)',
+        borderWidth: 1, borderRadius: 3,
+      },
+    ],
+  }
+
+  /* ── CTC Ratio per delegate across months ── */
+  const ctcChartData = {
+    labels: ctcR.map(r => r.mr),
+    datasets: [
+      { label: 'Jan CTC %', data: ctcR.map(r => r.jan), backgroundColor: ctcR.map(r => ctcColor(r.jan) + '99'), borderColor: ctcR.map(r => ctcColor(r.jan)), borderWidth: 1.5, borderRadius: 3 },
+      { label: 'Mar CTC %', data: ctcR.map(r => r.mar), backgroundColor: ctcR.map(r => ctcColor(r.mar) + '66'), borderColor: ctcR.map(r => ctcColor(r.mar)), borderWidth: 1.5, borderRadius: 3 },
+    ],
+  }
+
+  const ctcChartOptions = {
     ...baseOptions(),
     plugins: {
       ...baseOptions().plugins,
       annotation: {
         annotations: {
           target: {
-            type: 'line',
-            yMin: 25, yMax: 25,
-            borderColor: COLORS.danger,
-            borderWidth: 2, borderDash: [6, 4],
-          }
-        }
-      }
-    }
+            type: 'line', yMin: 25, yMax: 25,
+            borderColor: COLORS.danger, borderWidth: 2, borderDash: [6,4],
+            label: { content: '25% Target', display: true, color: COLORS.danger, font: { size: 10 } },
+          },
+        },
+      },
+    },
   }
 
-  const delCols = [
-    { key: 'fullname', label: 'Delegate' },
-    { key: 'jan', label: 'Jan Visits' },
-    { key: 'feb', label: 'Feb Visits' },
-    { key: 'mar', label: 'Mar Visits' },
-    { key: 'total', label: 'Q1 Total' },
+  /* ── Days Worked vs Target ── */
+  const daysData = {
+    labels: names,
+    datasets: [
+      { label: 'Q1 Days Target', data: dls.map(d => d.q1.days_target), backgroundColor: 'rgba(148,163,184,0.25)', borderColor: '#94a3b8', borderWidth: 1, borderRadius: 3 },
+      { label: 'Q1 Days Worked', data: dls.map(d => d.q1.days_worked), backgroundColor: COLORS.q1A,               borderColor: COLORS.q1,  borderWidth: 1, borderRadius: 3 },
+    ],
+  }
+
+  /* ── Master Q1 table ── */
+  const tblCols = [
+    { key: 'name',        label: 'Delegate' },
+    { key: 'territory',   label: 'Territory' },
+    { key: 'calls',       label: 'Q1 Calls' },
+    { key: 'prescriber',  label: 'Prescriber' },
+    { key: 'pharmacy',    label: 'Pharmacy' },
+    { key: 'drs',         label: 'Drs Conv.' },
+    { key: 'conv_pct',    label: 'Conv. %' },
+    { key: 'orders',      label: 'Orders (€)' },
+    { key: 'ctc',         label: 'CTC (€)' },
+    { key: 'ctc_ratio',   label: 'CTC Ratio' },
+    { key: 'days',        label: 'Days W/T' },
+    { key: 'tour_cov',    label: 'Tour Cov.' },
   ]
-  const delRows = vc.map(r => ({
-    fullname: r.fullname || r.mr,
-    jan: r.jan || 0,
-    feb: r.feb || 0,
-    mar: r.mar || 0,
-    total: ((r.jan||0)+(r.feb||0)+(r.mar||0)),
-  }))
+
+  const tblRows = dls.map(d => {
+    const q = d.q1
+    return {
+      name:       d.display_name,
+      territory:  d.territory,
+      calls:      q.calls,
+      prescriber: q.prescriber,
+      pharmacy:   q.pharmacy,
+      drs:        q.drs_converted,
+      conv_pct:   fmtPct(q.conversion_pct),
+      orders:     fmtEur(q.orders_eur),
+      ctc:        fmtEur(q.ctc_eur),
+      ctc_ratio:  <Badge text={fmtPct(q.ctc_ratio)} variant={ctcVariant(q.ctc_ratio)} />,
+      days:       `${q.days_worked} / ${q.days_target}`,
+      tour_cov:   fmtPct(q.tour_coverage_pct),
+    }
+  })
+
+  const overallUtil = summ.total_days_target > 0
+    ? `${Math.round(summ.total_days_worked / summ.total_days_target * 100)}% utilization`
+    : ''
 
   return (
     <div>
-      <SectionLabel tag="DELEGATES" text="VISIT COUNTS — CROSS-MONTH" monthColor="del-s" />
-      <div className="full">
-        <ChartCard title="Visit Counts by Delegate — Q1 2026" sub="Jan · Feb · Mar grouped bars" height="h300">
-          <Bar data={vcData} options={baseOptions()} />
-        </ChartCard>
+      {/* ── Q1 Summary KPIs ── */}
+      <SectionLabel tag="DELEGATES" text="Q1 FIELD FORCE SUMMARY" monthColor="del-s" />
+      <div className="kpi-grid">
+        <KpiCard label="Total Calls — Q1"       value={(summ.total_calls ?? 0).toLocaleString()}    monthColor="q" />
+        <KpiCard label="Prescriber Calls"        value={(summ.total_prescriber ?? 0).toLocaleString()} monthColor="q" />
+        <KpiCard label="Pharmacy Calls"          value={(summ.total_pharmacy ?? 0).toLocaleString()}   monthColor="q" />
+        <KpiCard label="Drs Converted — Q1"      value={summ.total_drs ?? 0}                           monthColor={summ.total_drs > 0 ? 'g' : 'd'} />
+        <KpiCard label="Total Orders — Q1"       value={fmtEur(summ.total_orders_eur)}                 monthColor="g" />
+        <KpiCard label="Total CTC — Q1"          value={fmtEur(summ.total_ctc_eur)}                    monthColor="d" />
+        <KpiCard
+          label="Overall CTC Ratio"
+          value={fmtPct(summ.overall_ctc_ratio)}
+          sub="Target ≤ 25% — all far above"
+          monthColor={ctcVariant(summ.overall_ctc_ratio)}
+        />
+        <KpiCard
+          label="Days Utilization"
+          value={overallUtil}
+          sub={`${summ.total_days_worked ?? 0} / ${summ.total_days_target ?? 0} days`}
+          monthColor="q"
+        />
       </div>
 
-      <SectionLabel tag="DELEGATES" text="ORDERS & AVG CALLS PER DAY" monthColor="del-s" />
+      {/* ── Per-Delegate Scorecards ── */}
+      <SectionLabel tag="DELEGATES" text="DELEGATE SCORECARDS — Q1 2026" monthColor="del-s" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px', marginBottom: '24px' }}>
+        {dls.map((d, i) => (
+          <DelegateScorecard key={d.id} d={d} color={DEL_COLORS[i % DEL_COLORS.length]} />
+        ))}
+      </div>
+
+      {/* ── Calls + Drs Converted ── */}
+      <SectionLabel tag="DELEGATES" text="ACTIVITY ANALYSIS" monthColor="del-s" />
       <div className="grid-2">
-        <ChartCard title="Monthly Orders by Delegate (€)" height="h300">
-          <Bar data={ordData} options={baseOptions()} />
+        <ChartCard title="Total Calls by Delegate — Jan · Feb · Mar" sub="Call volume trend across Q1" height="h300">
+          <Bar data={callsTrendData} options={baseOptions()} />
         </ChartCard>
-        <ChartCard title="Avg Calls per Day — Monthly Trend" sub="Solid = individual MRs · Dashed = overall" height="h300">
-          <Line data={apdData} options={baseOptions()} />
+        <ChartCard title="Doctors Converted — Monthly Trend" sub="Conversion performance per delegate" height="h300">
+          <Line data={drsData} options={baseOptions()} />
         </ChartCard>
       </div>
 
-      <SectionLabel tag="DELEGATES" text="CTC RATIOS — ALL MONTHS" monthColor="del-s" />
+      {/* ── ROI Analysis ── */}
+      <SectionLabel tag="DELEGATES" text="CTC vs ORDERS — ROI ANALYSIS" monthColor="del-s" />
+      <div className="grid-2">
+        <ChartCard
+          title="Q1 Orders vs CTC Investment per Delegate"
+          sub="Green = orders generated · Red = CTC cost · Bar above red = profitable"
+          height="h300"
+        >
+          <Bar data={roiData} options={baseOptions()} />
+        </ChartCard>
+        <ChartCard
+          title="⚠️ CTC Ratio — Jan vs Mar (Feb: no order data)"
+          sub="CTC ÷ Orders × 100 — target ≤ 25% · all delegates significantly over"
+          height="h300"
+        >
+          <Bar data={ctcChartData} options={ctcChartOptions} />
+        </ChartCard>
+      </div>
+
+      {/* ── Days Utilization ── */}
+      <SectionLabel tag="DELEGATES" text="DAYS WORKED vs TARGET" monthColor="del-s" />
       <div className="full">
-        <ChartCard title="⚠️ CTC Ratio by Delegate — Q1 2026" sub="Target max 25% — all delegates far above" height="h250">
-          <Bar data={ctcData} options={ctcOptions} />
+        <ChartCard title="Q1 Days Worked vs Target per Delegate" sub="Purple = days worked · Grey = target" height="h250">
+          <Bar data={daysData} options={baseOptions()} />
         </ChartCard>
       </div>
 
-      <SectionLabel tag="DELEGATES" text="CROSS-MONTH VISIT SUMMARY" monthColor="del-s" />
+      {/* ── Q1 Master Table ── */}
+      <SectionLabel tag="DELEGATES" text="Q1 MASTER SCORECARD" monthColor="del-s" />
       <DataTable
-        title="Delegate Visit Summary — Q1 2026"
-        badge={{ text: 'Cross-Month', variant: 'q' }}
-        columns={delCols}
-        rows={delRows}
+        title="Delegate Performance — Full Q1 2026"
+        badge={{ text: `${dls.length} delegates · CTC target ≤ 25%`, variant: 'q' }}
+        columns={tblCols}
+        rows={tblRows}
       />
     </div>
   )

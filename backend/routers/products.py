@@ -102,8 +102,33 @@ async def get_products():
             tablet, inj = 0, 0
         category_mix[key] = {"tablet": tablet, "injectable": inj}
 
+    # KPI summary — totals + per-month sales & units
+    month_sales = {}
+    month_units = {}
+    for key in month_keys:
+        d = data.get(key, {})
+        s = d.get("sales", {}).get("current")
+        if s is not None and not s.empty:
+            month_sales[key] = round(float(s["TOTAL_VALUE_EUR"].sum()), 2)
+            month_units[key] = int(s["TOTAL_SALES"].sum()) if "TOTAL_SALES" in s.columns else 0
+        else:
+            month_sales[key] = 0
+            month_units[key] = 0
+
+    q1_kpis = {
+        "total_sales_eur": round(sum(month_sales.values()), 2),
+        "total_units":     sum(month_units.values()),
+        "jan_sales":  month_sales.get("jan", 0),
+        "feb_sales":  month_sales.get("feb", 0),
+        "mar_sales":  month_sales.get("mar", 0),
+        "jan_units":  month_units.get("jan", 0),
+        "feb_units":  month_units.get("feb", 0),
+        "mar_units":  month_units.get("mar", 0),
+    }
+
     result = safe_json({
-        "q1_trend": q1_trend,
+        "q1_kpis":      q1_kpis,
+        "q1_trend":     q1_trend,
         "annual_vs_q1": annual_vs_q1,
         "category_mix": category_mix,
     })

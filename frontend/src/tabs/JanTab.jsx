@@ -5,6 +5,7 @@ import SectionLabel from '../components/SectionLabel'
 import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
 import Badge from '../components/Badge'
+import TourPlanSection from '../components/TourPlanSection'
 import { baseOptions, COLORS } from '../utils/chartConfig'
 import { MONTH_CONFIG, calcChange, fmtChange, changeDir } from '../utils/monthConfig'
 
@@ -33,6 +34,7 @@ export default function JanTab() {
   const dt = data.delegate_table || []
   const ae = data.activity_expenses || []
   const ds = data.distributor_sales || []
+  const tp = data.tour_plan || {}
 
   const tvaData = {
     labels: tva.map(r => r.product),
@@ -66,7 +68,7 @@ export default function JanTab() {
     { key: 'name', label: 'Delegate' }, { key: 'territory', label: 'Territory' },
     { key: 'total_calls', label: 'Total Calls' }, { key: 'prescriber', label: 'Prescriber' },
     { key: 'non_prescriber', label: 'Non-Pres.' }, { key: 'pharmacy', label: 'Pharmacy' },
-    { key: 'days_worked', label: 'Days' }, { key: 'avg_per_day', label: 'Avg/Day' },
+    { key: 'days_worked', label: 'Days' },
     { key: 'orders_eur', label: 'Orders (€)' }, { key: 'ctc_eur', label: 'CTC (€)' },
     { key: 'ctc_ratio', label: 'CTC Ratio' }, { key: 'drs_converted', label: 'Drs Conv.' },
   ]
@@ -105,7 +107,6 @@ export default function JanTab() {
         <KpiCard label="Prescriber Calls"  value={k.prescriber_calls ?? '—'} monthColor={CFG.cls} />
         <KpiCard label="Pharmacy Calls"    value={k.pharmacy_calls ?? '—'} monthColor={CFG.cls} />
         <KpiCard label="Drs Converted"     value={k.drs_converted ?? 0} monthColor="d" />
-        <KpiCard label="Avg Visits/Day"    value={k.avg_visits_day ?? '—'} monthColor={CFG.cls} />
         <KpiCard label="Activity Spent"    value={`€${(k.activity_spent_eur||0).toLocaleString()}`}
           sub={`FCFA ${(k.activity_spent_fcfa||0).toLocaleString()}`} monthColor={CFG.cls} />
         <KpiCard label="Closing Balance"   value={`€${(k.closing_balance_eur||0).toLocaleString()}`}
@@ -141,6 +142,8 @@ export default function JanTab() {
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="DISTRIBUTOR-WISE SALES" monthColor={CFG.sectionCls} />
       <DataTable title={`Sales by Distributor — ${CFG.label} 2026`} borderColor={CFG.color} columns={dsCols} rows={dsRows} />
+
+      <TourPlanSection tourPlan={tp} cfg={CFG} />
     </div>
   )
 }

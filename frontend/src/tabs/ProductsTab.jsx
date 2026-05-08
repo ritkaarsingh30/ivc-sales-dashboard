@@ -2,14 +2,25 @@ import { Bar, Doughnut } from 'react-chartjs-2'
 import { useProducts } from '../hooks/useDashboard'
 import SectionLabel from '../components/SectionLabel'
 import ChartCard from '../components/ChartCard'
+import KpiCard from '../components/KpiCard'
 import DataTable from '../components/DataTable'
 import { baseOptions, baseOptionsNoScale, COLORS, PALETTE } from '../utils/chartConfig'
+
+function fmt(n, decimals = 0) {
+  if (n === null || n === undefined) return '—'
+  return `€${Number(n).toLocaleString(undefined, { maximumFractionDigits: decimals })}`
+}
+function fmtUnits(n) {
+  if (n === null || n === undefined) return '—'
+  return Number(n).toLocaleString()
+}
 
 export default function ProductsTab() {
   const { data, isLoading, isError } = useProducts()
   if (isLoading) return <div className="loading">⟳ Loading products data...</div>
   if (isError) return <div className="error">✕ Failed to load products data. Is the backend running?</div>
 
+  const kpis = data.q1_kpis || {}
   const trend = data.q1_trend || []
   const avq = data.annual_vs_q1 || []
   const cm = data.category_mix || {}
@@ -62,6 +73,39 @@ export default function ProductsTab() {
 
   return (
     <div>
+      <div className="kpi-grid">
+        <KpiCard
+          label="Total Units Sold — Q1"
+          value={fmtUnits(kpis.total_units)}
+          sub="Jan + Feb + Mar combined"
+          monthColor="q"
+        />
+        <KpiCard
+          label="Total Sales — Q1"
+          value={fmt(kpis.total_sales_eur, 0)}
+          sub="Jan + Feb + Mar combined"
+          monthColor="q"
+        />
+        <KpiCard
+          label="January Sales"
+          value={fmt(kpis.jan_sales, 0)}
+          sub={`${fmtUnits(kpis.jan_units)} units`}
+          monthColor="j"
+        />
+        <KpiCard
+          label="February Sales"
+          value={fmt(kpis.feb_sales, 0)}
+          sub={`${fmtUnits(kpis.feb_units)} units`}
+          monthColor="f"
+        />
+        <KpiCard
+          label="March Sales"
+          value={fmt(kpis.mar_sales, 0)}
+          sub={`${fmtUnits(kpis.mar_units)} units`}
+          monthColor="m"
+        />
+      </div>
+
       <SectionLabel tag="PRODUCTS" text="Q1 PRODUCT TREND" monthColor="prod-s" />
       <div className="full">
         <ChartCard title="All Products — Q1 2026 Revenue Trend (Jan · Feb · Mar)" sub="Side-by-side comparison across all months" height="h340" monthColor="tri">

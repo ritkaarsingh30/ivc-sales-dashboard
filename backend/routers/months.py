@@ -2,6 +2,7 @@
 GET /api/months/{month} — full monthly data bundle
 """
 import json
+import math
 import numpy as np
 from fastapi import APIRouter, HTTPException
 from constants import FCFA_TO_EUR, DISTRIBUTORS
@@ -120,23 +121,37 @@ async def get_month(month: str):
                 "sales_eur": round(float(row["TOTAL_VALUE_EUR"]), 2),
             })
 
+    def _safe_int(v):
+        try:
+            f = float(v)
+            return 0 if math.isnan(f) or math.isinf(f) else int(f)
+        except (TypeError, ValueError):
+            return 0
+
+    def _safe_float(v):
+        try:
+            f = float(v)
+            return 0.0 if math.isnan(f) or math.isinf(f) else f
+        except (TypeError, ValueError):
+            return 0.0
+
     # ── Delegate Table ──
     delegate_table = []
     if delegates_df is not None and not delegates_df.empty:
         for _, row in delegates_df.iterrows():
-            total_orders = float(row.get("TotalOrders", 0) or 0)
-            ctc = float(row.get("CTC", 0) or 0)
+            total_orders = _safe_float(row.get("TotalOrders", 0))
+            ctc = _safe_float(row.get("CTC", 0))
             ctc_ratio = round(ctc / total_orders * 100, 1) if total_orders > 0 else None
             delegate_table.append({
                 "name": row.get("Delegate", ""),
                 "territory": row.get("Territory", ""),
-                "total_calls": int(row.get("TotalCalls", 0) or 0),
-                "prescriber": int(row.get("Prescriber", 0) or 0),
-                "non_prescriber": int(row.get("NonPrescriber", 0) or 0),
-                "pharmacy": int(row.get("PharmacyCalls", 0) or 0),
-                "drs_converted": int(row.get("DrsConverted", 0) or 0),
-                "days_worked": int(row.get("DaysWorked", 0) or 0),
-                "avg_per_day": round(float(row.get("AvgCallsPerDay", 0) or 0), 2),
+                "total_calls": _safe_int(row.get("TotalCalls", 0)),
+                "prescriber": _safe_int(row.get("Prescriber", 0)),
+                "non_prescriber": _safe_int(row.get("NonPrescriber", 0)),
+                "pharmacy": _safe_int(row.get("PharmacyCalls", 0)),
+                "drs_converted": _safe_int(row.get("DrsConverted", 0)),
+                "days_worked": _safe_int(row.get("DaysWorked", 0)),
+                "avg_per_day": round(_safe_float(row.get("AvgCallsPerDay", 0)), 2),
                 "orders_eur": round(total_orders, 2) if total_orders else None,
                 "ctc_eur": round(ctc, 2) if ctc else None,
                 "ctc_ratio": ctc_ratio,
@@ -189,19 +204,85 @@ async def get_month(month: str):
             # Shorten name
             short = name.split()[-1] if name else name
             call_breakdown["labels"].append(short)
-            call_breakdown["prescriber"].append(int(row.get("Prescriber", 0) or 0))
-            call_breakdown["non_prescriber"].append(int(row.get("NonPrescriber", 0) or 0))
-            call_breakdown["pharmacy"].append(int(row.get("PharmacyCalls", 0) or 0))
+            call_breakdown["prescriber"].append(_safe_int(row.get("Prescriber", 0)))
+            call_breakdown["non_prescriber"].append(_safe_int(row.get("NonPrescriber", 0)))
+            call_breakdown["pharmacy"].append(_safe_int(row.get("PharmacyCalls", 0)))
+
+    # ── Tour Plan ──
+    tour_plan = {"summary": {}, "by_delegate": [], "entries": []}
+    tour_df = d.get("tour")
+    if tour_df is not None and hasattr(tour_df, "empty") and not tour_df.empty:
+        total_planned = len(tour_df)
+        covered_count = int(tour_df["Covered"].sum())
+        uncovered_count = total_planned - covered_count
+        coverage_pct = round(covered_count / total_planned * 100, 1) if total_planned > 0 else 0
+
+        joint_mask = (
+            tour_df["Joint_Working"].notna() &
+            (~tour_df["Joint_Working"].astype(str).str.strip().str.lower().isin(["", "nan"]))
+        )
+        joint_count = int(joint_mask.sum())
+
+        by_delegate = []
+        for mr_id, grp in tour_df.groupby("MR"):
+            mr_name = str(grp["MR_Raw"].iloc[0]) if not grp.empty else mr_id
+            planned = len(grp)
+            cov = int(grp["Covered"].sum())
+            by_delegate.append({
+                "mr":           mr_name,
+                "mr_id":        mr_id,
+                "planned":      planned,
+                "covered":      cov,
+                "uncovered":    planned - cov,
+                "coverage_pct": round(cov / planned * 100, 1) if planned > 0 else 0,
+            })
+        by_delegate.sort(key=lambda x: x["coverage_pct"], reverse=True)
+
+        entries = []
+        for _, row in tour_df.iterrows():
+            date_val = row.get("Date")
+            date_str = str(date_val)[:10] if date_val is not None and date_val == date_val else ""
+            joint = str(row.get("Joint_Working", "")).strip()
+            joint = "" if joint.lower() in ("nan", "") else joint
+            entries.append({
+                "date":          date_str,
+                "mr":            str(row.get("MR_Raw", row.get("MR", ""))),
+                "planned_area":  str(row.get("Planned_Area", "")).strip(),
+                "actual_area":   str(row.get("Actual_Area",  "")).strip(),
+                "covered":       bool(row.get("Covered", False)),
+                "joint_working": joint,
+            })
+
+        # Group entries by delegate (preserving by_delegate sort order)
+        entries_by_delegate = {}
+        for del_info in by_delegate:
+            mr_name = del_info["mr"]
+            entries_by_delegate[mr_name] = [e for e in entries if e["mr"] == mr_name]
+
+        tour_plan = {
+            "summary": {
+                "total":             total_planned,
+                "covered":           covered_count,
+                "uncovered":         uncovered_count,
+                "coverage_pct":      coverage_pct,
+                "delegates_active":  len(by_delegate),
+                "joint_working":     joint_count,
+            },
+            "by_delegate":         by_delegate,
+            "entries":             entries,
+            "entries_by_delegate": entries_by_delegate,
+        }
 
     result = safe_json({
-        "month": month,
-        "kpis": kpis,
+        "month":              month,
+        "kpis":               kpis,
         "target_vs_achieved": target_vs_achieved,
-        "product_sales": product_sales,
-        "delegate_table": delegate_table,
-        "distributor_sales": distributor_sales,
-        "activity_expenses": activity_expenses,
-        "call_breakdown": call_breakdown,
+        "product_sales":      product_sales,
+        "delegate_table":     delegate_table,
+        "distributor_sales":  distributor_sales,
+        "activity_expenses":  activity_expenses,
+        "call_breakdown":     call_breakdown,
+        "tour_plan":          tour_plan,
     })
     await set_api_cache(cache_key, result)
     return result

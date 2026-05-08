@@ -5,6 +5,7 @@ import SectionLabel from '../components/SectionLabel'
 import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
 import Badge from '../components/Badge'
+import TourPlanSection from '../components/TourPlanSection'
 import { baseOptions, COLORS } from '../utils/chartConfig'
 import { MONTH_CONFIG, calcChange, fmtChange, changeDir } from '../utils/monthConfig'
 
@@ -43,6 +44,7 @@ export default function MarTab() {
   const dt = data.delegate_table || []
   const ae = data.activity_expenses || []
   const ds = data.distributor_sales || []
+  const tp = data.tour_plan || {}
 
   // Dynamic changes from prev month
   const chgSales  = calcChange(k.total_sales_eur,      pk.total_sales_eur)
@@ -51,7 +53,6 @@ export default function MarTab() {
   const chgVisits = calcChange(k.total_visits,          pk.total_visits)
   const chgPres   = calcChange(k.prescriber_calls,      pk.prescriber_calls)
   const chgPharm  = calcChange(k.pharmacy_calls,        pk.pharmacy_calls)
-  const chgAvg    = calcChange(k.avg_visits_day,        pk.avg_visits_day)
 
   const tvaData = {
     labels: tva.map(r => r.product),
@@ -105,8 +106,7 @@ export default function MarTab() {
     { key: 'name', label: 'Delegate' }, { key: 'territory', label: 'Territory' },
     { key: 'total_calls', label: 'Total Calls' }, { key: 'prescriber', label: 'Prescriber' },
     { key: 'pharmacy', label: 'Pharmacy' }, { key: 'days_worked', label: 'Days' },
-    { key: 'avg_per_day', label: 'Avg/Day' }, { key: 'orders_eur', label: 'Orders (€)' },
-    { key: 'ctc_eur', label: 'CTC (€)' }, { key: 'ctc_ratio', label: 'CTC Ratio' },
+    { key: 'orders_eur', label: 'Orders (€)' }, { key: 'ctc_eur', label: 'CTC (€)' }, { key: 'ctc_ratio', label: 'CTC Ratio' },
   ]
 
   const aeCols = [
@@ -149,8 +149,6 @@ export default function MarTab() {
         <KpiCard label="Pharmacy Calls"    value={k.pharmacy_calls ?? '—'}
           change={fmtChange(chgPharm)} changeDir={changeDir(chgPharm)} monthColor={CFG.cls} />
         <KpiCard label="Drs Converted"     value={k.drs_converted ?? 0} monthColor="d" />
-        <KpiCard label="Avg Visits/Day"    value={k.avg_visits_day ?? '—'}
-          change={fmtChange(chgAvg)} changeDir={changeDir(chgAvg)} monthColor={CFG.cls} />
         <KpiCard label={isOverrun ? 'Budget Overrun ⚠️' : 'Closing Balance'}
           value={`€${(k.closing_balance_eur||0).toLocaleString()}`}
           sub={`FCFA ${(k.closing_balance_fcfa||0).toLocaleString()}`}
@@ -190,6 +188,8 @@ export default function MarTab() {
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="DISTRIBUTOR-WISE SALES" monthColor={CFG.sectionCls} />
       <DataTable title={`Sales by Distributor — ${CFG.label} 2026`} borderColor={CFG.color} columns={dsCols} rows={dsRows} />
+
+      <TourPlanSection tourPlan={tp} cfg={CFG} />
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import os
+import math
 from groq import AsyncGroq
 import json
 
@@ -21,18 +22,32 @@ def build_summary(data: dict) -> dict:
         total_sales = float(sales["TOTAL_VALUE_EUR"].sum()) if sales is not None and not sales.empty else 0
         total_target = float(proj["Target_Value_EUR"].sum()) if proj is not None and not proj.empty else 0
 
+        def _si(v):
+            try:
+                f = float(v)
+                return 0 if math.isnan(f) or math.isinf(f) else int(f)
+            except (TypeError, ValueError):
+                return 0
+
+        def _sf(v):
+            try:
+                f = float(v)
+                return 0.0 if math.isnan(f) or math.isinf(f) else f
+            except (TypeError, ValueError):
+                return 0.0
+
         delegate_summary = []
         if delegates is not None and not delegates.empty:
             for _, row in delegates.iterrows():
                 delegate_summary.append({
                     "name": str(row.get("Delegate", "")),
-                    "total_calls": int(row.get("TotalCalls", 0) or 0),
-                    "prescriber": int(row.get("Prescriber", 0) or 0),
-                    "drs_converted": int(row.get("DrsConverted", 0) or 0),
-                    "days_worked": int(row.get("DaysWorked", 0) or 0),
-                    "days_target": int(row.get("DaysTarget", 0) or 0),
-                    "ctc": float(row.get("CTC", 0) or 0),
-                    "total_orders": float(row.get("TotalOrders", 0) or 0),
+                    "total_calls": _si(row.get("TotalCalls", 0)),
+                    "prescriber": _si(row.get("Prescriber", 0)),
+                    "drs_converted": _si(row.get("DrsConverted", 0)),
+                    "days_worked": _si(row.get("DaysWorked", 0)),
+                    "days_target": _si(row.get("DaysTarget", 0)),
+                    "ctc": _sf(row.get("CTC", 0)),
+                    "total_orders": _sf(row.get("TotalOrders", 0)),
                 })
 
         summary[month_key] = {

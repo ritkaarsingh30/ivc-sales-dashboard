@@ -138,10 +138,50 @@ async def get_overview():
             "top_product": _top_product(sales.get("current")),
         })
 
-    # Q1 Summary
+    # Q1 sales per month
     jan_s = month_comparison[0]["sales"] if month_comparison else 0
     feb_s = month_comparison[1]["sales"] if len(month_comparison) > 1 else 0
     mar_s = month_comparison[2]["sales"] if len(month_comparison) > 2 else 0
+
+    # Best month by sales
+    best_month = "January"
+    best_val = jan_s
+    if feb_s > best_val: best_month, best_val = "February", feb_s
+    if mar_s > best_val: best_month, best_val = "March", mar_s
+
+    # Top product across Q1
+    all_sales_dfs = []
+    for key in ["jan", "feb", "mar"]:
+        d = data.get(key, {})
+        s = d.get("sales", {}).get("current")
+        if s is not None and not s.empty:
+            all_sales_dfs.append(s)
+    top_product_q1 = "N/A"
+    if all_sales_dfs:
+        import pandas as _pd
+        combined = _pd.concat(all_sales_dfs)
+        if not combined.empty:
+            grp = combined.groupby("Product")["TOTAL_VALUE_EUR"].sum()
+            top_product_q1 = grp.idxmax()
+            top_product_q1_val = round(float(grp.max()), 2)
+        else:
+            top_product_q1_val = 0
+    else:
+        top_product_q1_val = 0
+
+    # Annual target from env
+    annual_target_eur = 205000  # €205K as per constants
+    q1_total = round(jan_s + feb_s + mar_s, 2)
+    annual_achievement_pct = round(q1_total / annual_target_eur * 100, 1) if annual_target_eur else None
+
+    # Total visits Q1 & per delegate aggregation for pie chart
+    delegate_visits_q1 = {}
+    for key in ["jan", "feb", "mar"]:
+        d = data.get(key, {})
+        visits = d.get("visits")
+        if visits is not None and hasattr(visits, "empty") and not visits.empty and "MR" in visits.columns:
+            for mr, cnt in visits.groupby("MR").size().items():
+                delegate_visits_q1[mr] = delegate_visits_q1.get(mr, 0) + int(cnt)
 
     q1_summary = {
         "total_sales_eur": round(jan_s + feb_s + mar_s, 2),
@@ -151,16 +191,33 @@ async def get_overview():
         "jan_achievement_pct": month_comparison[0]["achievement"] if month_comparison else None,
         "feb_achievement_pct": month_comparison[1]["achievement"] if len(month_comparison) > 1 else None,
         "mar_achievement_pct": month_comparison[2]["achievement"] if len(month_comparison) > 2 else None,
+        "annual_target_eur": annual_target_eur,
+        "annual_achievement_pct": annual_achievement_pct,
+        "best_month": best_month,
+        "best_month_sales": round(best_val, 2),
+        "top_product_q1": top_product_q1,
+        "top_product_q1_val": top_product_q1_val,
         "total_visits": {
             "jan": month_comparison[0]["visits"] if month_comparison else 0,
             "feb": month_comparison[1]["visits"] if len(month_comparison) > 1 else 0,
             "mar": month_comparison[2]["visits"] if len(month_comparison) > 2 else 0,
         },
+        "total_visits_q1": sum([
+            month_comparison[0]["visits"] if month_comparison else 0,
+            month_comparison[1]["visits"] if len(month_comparison) > 1 else 0,
+            month_comparison[2]["visits"] if len(month_comparison) > 2 else 0,
+        ]),
         "drs_converted": {
             "jan": month_comparison[0]["drs_converted"] if month_comparison else 0,
             "feb": month_comparison[1]["drs_converted"] if len(month_comparison) > 1 else 0,
             "mar": month_comparison[2]["drs_converted"] if len(month_comparison) > 2 else 0,
         },
+        "drs_converted_q1": sum([
+            month_comparison[0]["drs_converted"] if month_comparison else 0,
+            month_comparison[1]["drs_converted"] if len(month_comparison) > 1 else 0,
+            month_comparison[2]["drs_converted"] if len(month_comparison) > 2 else 0,
+        ]),
+        "delegate_visits_q1": [{ "delegate": k, "visits": v } for k, v in sorted(delegate_visits_q1.items(), key=lambda x: -x[1])],
         "avg_calls_per_day": {
             "jan": month_comparison[0]["avg_visits_day"] if month_comparison else None,
             "feb": month_comparison[1]["avg_visits_day"] if len(month_comparison) > 1 else None,
