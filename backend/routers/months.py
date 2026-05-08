@@ -48,7 +48,6 @@ async def get_month(month: str):
     expense = d.get("expense", {}) or {}
     proj_dict = d.get("projection", {}) or {}
     visits_df = d.get("visits")
-    copy_data = d.get("copy", {}) or {}
 
     # ── KPIs ──
     delegates_df = monthly.get("delegates")

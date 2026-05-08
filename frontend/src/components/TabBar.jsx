@@ -17,7 +17,7 @@ export default function TabBar({ activeTab, onTabChange, availableMonths = [] })
   })
 
   const tabs = [
-    { id: 'ov', label: '📊 Q1 OVERVIEW', cls: 'ov' },
+    { id: 'ov', label: '📊 OVERVIEW', cls: 'ov' },
     ...monthTabs,
     ...STATIC_TABS_AFTER,
   ]

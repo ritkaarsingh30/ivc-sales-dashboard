@@ -44,9 +44,8 @@ ALL_MONTH_KEYS: list[str] = list(MONTH_ALIASES.keys())
 
 def _make_rules():
     rules = [
-        # Master files — no month alias check
-        ("SHEET_SALES",       ["sales", "2026"], [],       ["monthly", "visit", "expense", "projection", "copy"]),
-        ("SHEET_COPY_REPORT", ["copy"],           [],       ["expense", "visit", "monthly", "projection", "tour"]),
+        # Master sales file — no month alias check
+        ("SHEET_SALES", ["sales", "2026"], [], ["monthly", "visit", "expense", "projection", "copy"]),
     ]
     for mon, aliases in MONTH_ALIASES.items():
         mon_up = mon.upper()

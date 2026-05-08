@@ -22,7 +22,6 @@ from loaders import (
     load_projection,
     load_monthly_reports,
     load_visit_tracker,
-    load_copy_report,
     load_tour_plan,
 )
 from cache.redis_client import get_sheet_metadata, set_sheet_metadata, redis_client
@@ -64,36 +63,18 @@ def _detect_sales_tabs(worksheet_titles: list[str]) -> dict[str, str]:
     return abbr_to_tab
 
 
-def _detect_copy_tabs(worksheet_titles: list[str]) -> dict[str, str]:
-    """
-    Return {month_key: tab_title} for all month tabs in the copy report spreadsheet.
-    Handles: 'jan 2026', 'feb 2026', 'march 2026', 'april 2026', etc.
-    """
-    month_to_tab: dict[str, str] = {}
-    for title in worksheet_titles:
-        title_lower = title.lower()
-        for mon, aliases in MONTH_ALIASES.items():
-            if mon not in month_to_tab and any(a in title_lower for a in aliases):
-                month_to_tab[mon] = title
-                break
-    return month_to_tab
-
-
 def build_months_config(
     sheet_map: dict,
     sales_ws_titles: list[str],
-    copy_ws_titles: list[str],
 ) -> list[dict]:
     """
     Build the active MONTHS config from:
     - sheet_map: {logical_key: spreadsheet_id} from Drive discovery
     - sales_ws_titles: worksheet titles in the sales spreadsheet
-    - copy_ws_titles: worksheet titles in the copy report spreadsheet
 
     A month is included if it has a sales tab OR at least one per-month file on Drive.
     """
     sales_tabs = _detect_sales_tabs(sales_ws_titles)
-    copy_tabs = _detect_copy_tabs(copy_ws_titles)
     discovered = set(get_discovered_months(sheet_map))
 
     months_config: list[dict] = []
@@ -108,7 +89,6 @@ def build_months_config(
             "key":            mon,
             "sales_tab":      sales_tabs.get(mon, f"{mon_up}-26"),
             "prev_sales_tab": sales_tabs.get(prev_mon) if prev_mon else None,
-            "copy_tab":       copy_tabs.get(mon),
             "expense_key":    f"SHEET_{mon_up}_EXPENSE",
             "monthly_key":    f"SHEET_{mon_up}_MONTHLY",
             "projection_key": f"SHEET_{mon_up}_PROJECTION",
@@ -126,8 +106,8 @@ def build_months_config(
 async def init_months_config(storage: SheetStorage) -> None:
     """
     Populate the module-level MONTHS list. Tries Redis first to avoid extra
-    API calls on every restart. Falls back to opening the sales + copy
-    spreadsheets to detect tab names.
+    API calls on every restart. Falls back to opening the sales spreadsheet
+    to detect available month tabs.
 
     Call once on startup before load_all_from_sheets().
     """
@@ -142,9 +122,8 @@ async def init_months_config(storage: SheetStorage) -> None:
     except Exception as exc:
         print(f"[sheets_loader] Redis months read failed: {exc}")
 
-    # Open sales + copy in parallel just to list worksheet titles
+    # Open the sales spreadsheet to detect available month tabs
     sales_id = storage.sheet_id("SHEET_SALES")
-    copy_id  = storage.sheet_id("SHEET_COPY_REPORT")
 
     def _list_titles(sheet_id: str) -> list[str]:
         if not sheet_id:
@@ -157,12 +136,9 @@ async def init_months_config(storage: SheetStorage) -> None:
             return []
 
     loop = asyncio.get_event_loop()
-    sales_titles, copy_titles = await asyncio.gather(
-        loop.run_in_executor(None, _list_titles, sales_id),
-        loop.run_in_executor(None, _list_titles, copy_id),
-    )
+    sales_titles = await loop.run_in_executor(None, _list_titles, sales_id)
 
-    MONTHS = build_months_config(storage._sheet_map, sales_titles, copy_titles)
+    MONTHS = build_months_config(storage._sheet_map, sales_titles)
     print(f"[sheets_loader] Discovered months: {[m['key'] for m in MONTHS]}")
 
     try:
@@ -291,10 +267,6 @@ def _empty_month_data() -> dict:
             "balance_fcfa": 0, "missing_sheets": ["ALL"],
         },
         "monthly":    {"delegates": None, "budget_analysis": None, "missing_sheets": ["ALL"]},
-        "copy":       {
-            "product_perf": pd.DataFrame(), "plan_activities": pd.DataFrame(),
-            "actual_activities": pd.DataFrame(), "missing_sheets": ["ALL"],
-        },
         "tour":       pd.DataFrame(),
         "visits":     pd.DataFrame(
             columns=["MR_ID", "MR", "Doctor", "Speciality", "Clinic", "Visit_Date", "Month"]
@@ -321,18 +293,9 @@ async def load_all_from_sheets(storage: SheetStorage) -> dict:
         storage, "SHEET_SALES", sales_id, all_sales_tabs
     )
 
-    # ── Copy report: all month tabs in ONE batchGet call ─────────────────────
-    copy_tab_names = [m["copy_tab"] for m in MONTHS if m["copy_tab"]]
-    copy_id = storage.sheet_id("SHEET_COPY_REPORT")
-    copy_dfs, copy_mod, copy_cached = await _open_and_batch_fetch(
-        storage, "SHEET_COPY_REPORT", copy_id, copy_tab_names
-    )
-
-    # Persist cache metadata for master sheets
+    # Persist cache metadata for sales sheet
     if not sales_cached and sales_mod and sales_dfs:
         await set_sheet_metadata(sales_id, datetime.utcnow().isoformat(), sales_mod)
-    if not copy_cached and copy_mod and copy_dfs:
-        await set_sheet_metadata(copy_id, datetime.utcnow().isoformat(), copy_mod)
 
     # ── Per-month data ─────────────────────────────────────────────────────────
     for m in MONTHS:
@@ -346,14 +309,6 @@ async def load_all_from_sheets(storage: SheetStorage) -> dict:
             load_sales(df=sales_df, prev_df=prev_sales_df)
             if sales_df is not None and not sales_df.empty
             else {"current": pd.DataFrame(), "prev": pd.DataFrame()}
-        )
-
-        # Copy report
-        copy_df = copy_dfs.get(m["copy_tab"]) if m["copy_tab"] else None
-        copy = (
-            load_copy_report(df=copy_df)
-            if copy_df is not None and not copy_df.empty
-            else _empty_month_data()["copy"]
         )
 
         # Projection (PROJECTION + ACTIVITY PLAN tabs — one batchGet)
@@ -436,7 +391,7 @@ async def load_all_from_sheets(storage: SheetStorage) -> dict:
 
         data[key] = {
             "sales": sales, "projection": projection, "expense": expense,
-            "monthly": monthly, "copy": copy, "tour": tour, "visits": visits,
+            "monthly": monthly, "tour": tour, "visits": visits,
         }
         print(f"[sheets_loader] {key.upper()} OK.")
 
@@ -457,23 +412,21 @@ async def refresh_changed_from_sheets(
 
     # ── Check master sheets ───────────────────────────────────────────────────
     sales_id = storage.sheet_id("SHEET_SALES")
-    copy_id  = storage.sheet_id("SHEET_COPY_REPORT")
 
     loop = asyncio.get_event_loop()
-    sales_mod, copy_mod = await asyncio.gather(
-        loop.run_in_executor(None, storage.get_modified_time, sales_id) if sales_id else asyncio.sleep(0),
-        loop.run_in_executor(None, storage.get_modified_time, copy_id) if copy_id else asyncio.sleep(0),
+    sales_mod = await (
+        loop.run_in_executor(None, storage.get_modified_time, sales_id) if sales_id
+        else asyncio.sleep(0)
     )
 
     sales_cached = bool(sales_mod and (await get_sheet_metadata(sales_id) or {}).get("drive_modified") == sales_mod)
-    copy_cached  = bool(copy_mod  and (await get_sheet_metadata(copy_id)  or {}).get("drive_modified") == copy_mod)
 
-    # Re-discover months if master sheets changed (new tabs may have been added)
-    if not sales_cached or not copy_cached:
+    # Re-discover months if sales sheet changed (new tabs may have been added)
+    if not sales_cached:
         await invalidate_months_cache()
         await init_months_config(storage)
 
-    # Fetch changed master sheets
+    # Fetch changed sales sheet
     if not sales_cached and sales_id:
         all_sales_tabs = list(dict.fromkeys(
             [m["sales_tab"] for m in MONTHS]
@@ -493,28 +446,12 @@ async def refresh_changed_from_sheets(
     else:
         sales_dfs = {}
 
-    if not copy_cached and copy_id:
-        copy_tab_names = [m["copy_tab"] for m in MONTHS if m["copy_tab"]]
-        def _fetch_copy():
-            ss = storage.client.open_by_key(copy_id)
-            return _batch_get_tabs_sync(ss, copy_tab_names)
-        try:
-            copy_dfs = await loop.run_in_executor(None, _fetch_copy)
-            changed_env_keys.append("SHEET_COPY_REPORT")
-            if copy_mod:
-                await set_sheet_metadata(copy_id, datetime.utcnow().isoformat(), copy_mod)
-        except Exception as exc:
-            print(f"[refresh] Failed to fetch copy report: {exc}")
-            copy_dfs = {}
-    else:
-        copy_dfs = {}
-
     # ── Per-month data ────────────────────────────────────────────────────────
     for m in MONTHS:
         key = m["key"]
         existing_data.setdefault(key, _empty_month_data())
 
-        # Sales & copy (already fetched above)
+        # Sales (already fetched above)
         if sales_dfs:
             s_df  = sales_dfs.get(m["sales_tab"])
             p_df  = sales_dfs.get(m["prev_sales_tab"]) if m["prev_sales_tab"] else None
@@ -523,11 +460,6 @@ async def refresh_changed_from_sheets(
                 if s_df is not None and not s_df.empty
                 else {"current": pd.DataFrame(), "prev": pd.DataFrame()}
             )
-
-        if copy_dfs and m["copy_tab"]:
-            c_df = copy_dfs.get(m["copy_tab"])
-            if c_df is not None and not c_df.empty:
-                existing_data[key]["copy"] = load_copy_report(df=c_df)
 
         # Projection
         proj_id = storage.sheet_id(m["projection_key"])

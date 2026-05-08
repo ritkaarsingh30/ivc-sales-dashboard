@@ -40,8 +40,7 @@ def build_sheet_dependencies(month_keys: list[str]) -> dict[str, list[str]]:
     """
     month_endpoints = [f"months:{k}" for k in month_keys]
     deps: dict[str, list[str]] = {
-        "SHEET_SALES":       ["overview", "products", "delegates", "expenses", "insights"] + month_endpoints,
-        "SHEET_COPY_REPORT": ["overview", "products", "insights"] + month_endpoints,
+        "SHEET_SALES": ["overview", "products", "delegates", "expenses", "insights"] + month_endpoints,
     }
     for mon in month_keys:
         mon_up = mon.upper()
