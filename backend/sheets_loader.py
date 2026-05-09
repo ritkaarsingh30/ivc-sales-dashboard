@@ -13,6 +13,7 @@ Key design decisions:
 
 import re
 import json
+import time
 import asyncio
 from datetime import datetime
 from storage.sheets import SheetStorage
@@ -162,15 +163,21 @@ def _esc_tab(name: str) -> str:
     return name.replace("'", "''")
 
 
+def _is_rate_limit(exc: Exception) -> bool:
+    return "429" in str(exc) or "quota" in str(exc).lower()
+
+
 def _batch_get_tabs_sync(
     spreadsheet,
     tab_names: list[str] | None,
+    max_retries: int = 4,
 ) -> dict[str, pd.DataFrame]:
     """
     Synchronous: fetch one or more worksheet tabs in a single values_batch_get call.
 
     If tab_names is None, fetches ALL worksheets in the spreadsheet.
     Returns {tab_title: DataFrame}. Tabs not found return an empty DataFrame.
+    Retries up to max_retries times on 429 rate-limit errors with exponential backoff.
     """
     ws_list = spreadsheet.worksheets()
     available = {ws.title for ws in ws_list}
@@ -184,11 +191,19 @@ def _batch_get_tabs_sync(
         return {n: pd.DataFrame() for n in (tab_names or [])}
 
     ranges = [f"'{_esc_tab(n)}'!A:ZZ" for n in valid]
-    try:
-        result = spreadsheet.values_batch_get(ranges)
-    except Exception as exc:
-        print(f"[sheets_loader] values_batch_get failed: {exc}")
-        return {n: pd.DataFrame() for n in valid}
+
+    for attempt in range(max_retries):
+        try:
+            result = spreadsheet.values_batch_get(ranges)
+            break
+        except Exception as exc:
+            if _is_rate_limit(exc) and attempt < max_retries - 1:
+                wait = 15 * (2 ** attempt)   # 15s, 30s, 60s
+                print(f"[sheets_loader] Rate limited — waiting {wait}s before retry {attempt + 1}/{max_retries - 1}…")
+                time.sleep(wait)
+            else:
+                print(f"[sheets_loader] values_batch_get failed: {exc}")
+                return {n: pd.DataFrame() for n in valid}
 
     dfs: dict[str, pd.DataFrame] = {}
     for i, vr in enumerate(result.get("valueRanges", [])):
@@ -214,6 +229,7 @@ async def _open_and_batch_fetch(
     and batch-fetch the requested tabs, returning (dfs, drive_modified, False).
 
     tab_names=None fetches ALL tabs (used for tour plan and visits tracker).
+    Retries open_by_key on 429 errors with exponential backoff.
     """
     if not sheet_id:
         return {}, None, True
@@ -241,9 +257,19 @@ async def _open_and_batch_fetch(
 
     print(f"[cache MISS] {logical_key}")
 
-    def _fetch() -> dict[str, pd.DataFrame]:
-        ss = storage.client.open_by_key(sheet_id)
-        return _batch_get_tabs_sync(ss, tab_names)
+    def _fetch(max_retries: int = 4) -> dict[str, pd.DataFrame]:
+        for attempt in range(max_retries):
+            try:
+                ss = storage.client.open_by_key(sheet_id)
+                return _batch_get_tabs_sync(ss, tab_names)
+            except Exception as exc:
+                if _is_rate_limit(exc) and attempt < max_retries - 1:
+                    wait = 15 * (2 ** attempt)
+                    print(f"[sheets_loader] Rate limited on open — waiting {wait}s before retry {attempt + 1}/{max_retries - 1}…")
+                    time.sleep(wait)
+                else:
+                    raise
+        return {}
 
     try:
         dfs = await loop.run_in_executor(None, _fetch)

@@ -34,8 +34,9 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _norm_hdr(val) -> str:
-    """Normalize a header cell to a lowercase, stripped, newline-collapsed key."""
-    return str(val).strip().replace("\n", " ").lower()
+    """Normalize a header cell to a lowercase, stripped, whitespace-collapsed key."""
+    import re
+    return re.sub(r'\s+', ' ', str(val).strip()).lower()
 
 
 def _parse_header(df: pd.DataFrame, header_row_idx: int) -> dict:
