@@ -54,6 +54,11 @@ export const useRefreshData = () => {
   })
 }
 
+export const useActivities = () => useQuery({
+  queryKey: ['activities'],
+  queryFn: () => api.get('/activities').then(r => r.data)
+})
+
 export const useAvailableMonths = () => useQuery({
   queryKey: ['availableMonths'],
   queryFn: () => api.get('/health').then(r => r.data.months_loaded || []),

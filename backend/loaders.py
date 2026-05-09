@@ -434,7 +434,9 @@ def load_projection(file_bytes: bytes = None, df: pd.DataFrame = None,
 def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
                  month_label: str = "",
                  prev_closing_fcfa: "float | None" = None,
-                 canonical_rates: dict = None) -> dict:
+                 canonical_rates: dict = None,
+                 raw_ae: pd.DataFrame = None,
+                 raw_oe: pd.DataFrame = None) -> dict:
     """
     Returns dict with keys:
       activity_exp, other_exp, money_received (DataFrames),
@@ -443,13 +445,18 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
 
     Activity Expenses: Sales Outcome column is optional (absent in March).
     Negative closing balance is loaded as-is and logged as DataWarning.
+
+    When called from sheets_loader.py, pass all three raw DataFrames via
+    df=raw_mr, raw_ae=raw_ae, raw_oe=raw_oe.
     """
     canonical_rates = canonical_rates or {}
     missing_sheets = []
 
     if df is not None:
-        # Sheets path: only MONEY RECEIVED tab passed directly
-        raw_mr, raw_ae, raw_oe = df, None, None
+        # Sheets path: all three tabs passed directly
+        raw_mr = df
+        # raw_ae and raw_oe come from the caller (sheets_loader._load_expense_from_sheets)
+        # Leave them as-is (already set via kwargs)
     else:
         xl = pd.ExcelFile(BytesIO(file_bytes))
         raw_mr, miss = safe_sheet(xl, "MONEY RECEIVED")
@@ -470,6 +477,7 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
         if raw_oe is None:
             missing_sheets.append("OTHER EXPENSES")
 
+
     # ── MONEY RECEIVED ──────────────────────────────────────────────────────
     mr_df = None
     opening_balance_fcfa = 0.0
@@ -479,7 +487,18 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
     balance_fcfa         = 0.0
 
     if raw_mr is not None:
-        cols         = _parse_header(raw_mr, 1)
+        # Locate header row dynamically — Google Sheets API can strip leading blank rows
+        # so the header may land at index 0 instead of the expected index 1.
+        mr_header_idx = 1  # default (local Excel path always has a title row at 0)
+        for _i, _row in raw_mr.iterrows():
+            if _i > 5:
+                break
+            _vals = [str(v).strip().upper() for v in _row if str(v).strip() and str(v).strip().upper() != "NAN"]
+            if "TYPE" in _vals and any("AMOUNT" in v for v in _vals):
+                mr_header_idx = _i
+                break
+
+        cols         = _parse_header(raw_mr, mr_header_idx)
         type_col     = _find_col(cols, "type")
         date_col     = _find_col(cols, "date")
         desc_col     = _find_col(cols, "source / description", "source/description", "description")
@@ -489,7 +508,7 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
 
         mr_rows = []
         for i, row in raw_mr.iterrows():
-            if i < 2:
+            if i <= mr_header_idx:
                 continue
             type_val = str(row.iloc[type_col]).strip().upper() if type_col is not None else ""
             if not type_val or type_val in ("NAN", "TYPE"):
@@ -525,7 +544,16 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
     # ── ACTIVITY EXPENSES ────────────────────────────────────────────────────
     ae_df = None
     if raw_ae is not None:
-        cols        = _parse_header(raw_ae, 1)
+        ae_header_idx = 1
+        for _i, _row in raw_ae.iterrows():
+            if _i > 5:
+                break
+            _vals = [str(v).strip().upper() for v in _row if str(v).strip() and str(v).strip().upper() != "NAN"]
+            if "S.NO" in _vals and any("ACTIVITY" in v for v in _vals):
+                ae_header_idx = _i
+                break
+
+        cols        = _parse_header(raw_ae, ae_header_idx)
         sno_col     = _find_col(cols, "s.no")
         doc_col     = _find_col(cols, "doctor / contact", "doctor/contact")
         hosp_col    = _find_col(cols, "hospital / clinic", "hospital/clinic")
@@ -540,7 +568,7 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
 
         ae_rows = []
         for i, row in raw_ae.iterrows():
-            if i < 2:
+            if i <= ae_header_idx:
                 continue
             sn = row.iloc[sno_col] if sno_col is not None else None
             if not isinstance(sn, (int, float)) or pd.isna(sn):
@@ -593,7 +621,16 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
     # ── OTHER EXPENSES ───────────────────────────────────────────────────────
     oe_df = None
     if raw_oe is not None:
-        cols         = _parse_header(raw_oe, 1)
+        oe_header_idx = 1
+        for _i, _row in raw_oe.iterrows():
+            if _i > 5:
+                break
+            _vals = [str(v).strip().upper() for v in _row if str(v).strip() and str(v).strip().upper() != "NAN"]
+            if "S.NO" in _vals and any("DETAILS" in v or "AMOUNT" in v for v in _vals):
+                oe_header_idx = _i
+                break
+
+        cols         = _parse_header(raw_oe, oe_header_idx)
         sno_col      = _find_col(cols, "s.no")
         country_col  = _find_col(cols, "country")
         details_col  = _find_col(cols, "details")
@@ -604,7 +641,7 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
 
         oe_rows = []
         for i, row in raw_oe.iterrows():
-            if i < 2:
+            if i <= oe_header_idx:
                 continue
             sn = row.iloc[sno_col] if sno_col is not None else None
             if not isinstance(sn, (int, float)) or pd.isna(sn):

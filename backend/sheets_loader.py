@@ -254,6 +254,15 @@ async def _open_and_batch_fetch(
     return dfs, drive_modified, False
 
 
+def _get_first(dfs: dict, *keys) -> "pd.DataFrame | None":
+    """Return the first non-empty DataFrame found for any of the given tab names."""
+    for k in keys:
+        df = dfs.get(k)
+        if df is not None and hasattr(df, "empty") and not df.empty:
+            return df
+    return None
+
+
 # ── Default empty data structures ─────────────────────────────────────────────
 
 def _empty_month_data() -> dict:
@@ -276,12 +285,17 @@ def _empty_month_data() -> dict:
 
 # ── Main load entry point ─────────────────────────────────────────────────────
 
-async def load_all_from_sheets(storage: SheetStorage) -> dict:
+async def load_all_from_sheets(storage: SheetStorage, existing_data: dict = None) -> dict:
     """
     Fetch all IVC data from Google Sheets using batch fetching.
     MONTHS must be initialised first via init_months_config().
+
+    existing_data: previously loaded data dict. When a sheet hasn't changed
+    (cache HIT), its existing parsed data is reused instead of defaulting to zeros.
     """
+    existing_data = existing_data or {}
     data: dict = {}
+
 
     # ── Sales file: all month tabs in ONE batchGet call ───────────────────────
     all_sales_tabs = list(dict.fromkeys(
@@ -311,51 +325,69 @@ async def load_all_from_sheets(storage: SheetStorage) -> dict:
             else {"current": pd.DataFrame(), "prev": pd.DataFrame()}
         )
 
+        # Build canonical rates from the sales DataFrame (Product → RATE)
+        # so expense sales-outcome values can be multiplied to get EUR amounts.
+        canonical_rates: dict = {}
+        sales_current = sales.get("current")
+        if sales_current is not None and not sales_current.empty and "RATE" in sales_current.columns:
+            from name_map import normalize_product
+            for _, srow in sales_current.iterrows():
+                pid = normalize_product(str(srow.get("Product", "")))
+                if pid not in ("UNKNOWN", "EXCLUDED"):
+                    canonical_rates[pid] = float(srow["RATE"])
+
         # Projection (PROJECTION + ACTIVITY PLAN tabs — one batchGet)
         proj_id = storage.sheet_id(m["projection_key"])
         proj_dfs, proj_mod, proj_cached = await _open_and_batch_fetch(
-            storage, m["projection_key"], proj_id, ["PROJECTION", "ACTIVITY PLAN"]
+            storage, m["projection_key"], proj_id,
+            ["PROJECTION", "ACTIVITY PLAN", "ACTIVITY PLANS", "ACTIVITIES PLAN"],
         )
         if proj_dfs:
             projection = load_projection(
-                df=proj_dfs.get("PROJECTION"),
-                activity_df=proj_dfs.get("ACTIVITY PLAN"),
+                df=_get_first(proj_dfs, "PROJECTION"),
+                activity_df=_get_first(proj_dfs, "ACTIVITY PLAN", "ACTIVITY PLANS", "ACTIVITIES PLAN"),
             )
             if not proj_cached and proj_mod:
                 await set_sheet_metadata(proj_id, datetime.utcnow().isoformat(), proj_mod)
         else:
             projection = _empty_month_data()["projection"]
 
-        # Expense (3 tabs — one batchGet)
+        # Expense (3 tabs — one batchGet; try both old and new tab names)
         exp_id = storage.sheet_id(m["expense_key"])
         exp_dfs, exp_mod, exp_cached = await _open_and_batch_fetch(
             storage, m["expense_key"], exp_id,
-            ["MONEY RECEIVED", "ACTIVITY EXP.", "OTHER EXP."]
+            ["MONEY RECEIVED", "ACTIVITY EXP.", "ACTIVITY EXPENSES", "OTHER EXP.", "OTHER EXPENSES"],
         )
         if exp_dfs:
             expense = _load_expense_from_sheets(
-                exp_dfs.get("MONEY RECEIVED"),
-                exp_dfs.get("ACTIVITY EXP."),
-                exp_dfs.get("OTHER EXP."),
+                _get_first(exp_dfs, "MONEY RECEIVED"),
+                _get_first(exp_dfs, "ACTIVITY EXP.", "ACTIVITY EXPENSES"),
+                _get_first(exp_dfs, "OTHER EXP.", "OTHER EXPENSES"),
+                canonical_rates=canonical_rates,
             )
             if not exp_cached and exp_mod:
                 await set_sheet_metadata(exp_id, datetime.utcnow().isoformat(), exp_mod)
+        elif exp_cached and key in existing_data:
+            # Sheet hasn't changed — reuse already-parsed expense data
+            expense = existing_data[key].get("expense", _empty_month_data()["expense"])
         else:
             expense = _empty_month_data()["expense"]
 
-        # Monthly reports (2 tabs — one batchGet)
+        # Monthly reports (2 tabs — one batchGet; try both old and new tab names)
         monthly_id = storage.sheet_id(m["monthly_key"])
         monthly_dfs, monthly_mod, monthly_cached = await _open_and_batch_fetch(
             storage, m["monthly_key"], monthly_id,
-            ["Delegates Reports", "Budget Analysis"]
+            ["Delegates Reports", "DELEGATES", "Budget Analysis", "BUDGET ANALYSIS"],
         )
         if monthly_dfs:
             monthly = load_monthly_reports(
-                df=monthly_dfs.get("Delegates Reports"),
-                budget_df=monthly_dfs.get("Budget Analysis"),
+                df=_get_first(monthly_dfs, "Delegates Reports", "DELEGATES"),
+                budget_df=_get_first(monthly_dfs, "Budget Analysis", "BUDGET ANALYSIS"),
             )
             if not monthly_cached and monthly_mod:
                 await set_sheet_metadata(monthly_id, datetime.utcnow().isoformat(), monthly_mod)
+        elif monthly_cached and key in existing_data:
+            monthly = existing_data[key].get("monthly", _empty_month_data()["monthly"])
         else:
             monthly = _empty_month_data()["monthly"]
 
@@ -369,6 +401,8 @@ async def load_all_from_sheets(storage: SheetStorage) -> dict:
             tour = load_tour_plan(df=first_df) if not first_df.empty else pd.DataFrame()
             if not tour_cached and tour_mod:
                 await set_sheet_metadata(tour_id, datetime.utcnow().isoformat(), tour_mod)
+        elif tour_cached and key in existing_data:
+            tour = existing_data[key].get("tour", pd.DataFrame())
         else:
             tour = pd.DataFrame()
 
@@ -386,6 +420,8 @@ async def load_all_from_sheets(storage: SheetStorage) -> dict:
             visits = load_visit_tracker(sheets=sheets_arg)
             if not visits_cached and visits_mod:
                 await set_sheet_metadata(visits_id, datetime.utcnow().isoformat(), visits_mod)
+        elif visits_cached and key in existing_data:
+            visits = existing_data[key].get("visits", _empty_month_data()["visits"])
         else:
             visits = _empty_month_data()["visits"]
 
@@ -464,12 +500,16 @@ async def refresh_changed_from_sheets(
         # Projection
         proj_id = storage.sheet_id(m["projection_key"])
         proj_dfs, proj_mod, proj_cached = await _open_and_batch_fetch(
-            storage, m["projection_key"], proj_id, ["PROJECTION", "ACTIVITY PLAN"]
+            storage, m["projection_key"], proj_id,
+            ["PROJECTION", "ACTIVITY PLAN", "ACTIVITY PLANS", "ACTIVITIES PLAN"],
         )
         if not proj_cached:
             changed_env_keys.append(m["projection_key"])
             existing_data[key]["projection"] = (
-                load_projection(df=proj_dfs.get("PROJECTION"), activity_df=proj_dfs.get("ACTIVITY PLAN"))
+                load_projection(
+                    df=_get_first(proj_dfs, "PROJECTION"),
+                    activity_df=_get_first(proj_dfs, "ACTIVITY PLAN", "ACTIVITY PLANS", "ACTIVITIES PLAN"),
+                )
                 if proj_dfs else _empty_month_data()["projection"]
             )
             if proj_mod:
@@ -479,15 +519,15 @@ async def refresh_changed_from_sheets(
         exp_id = storage.sheet_id(m["expense_key"])
         exp_dfs, exp_mod, exp_cached = await _open_and_batch_fetch(
             storage, m["expense_key"], exp_id,
-            ["MONEY RECEIVED", "ACTIVITY EXP.", "OTHER EXP."]
+            ["MONEY RECEIVED", "ACTIVITY EXP.", "ACTIVITY EXPENSES", "OTHER EXP.", "OTHER EXPENSES"],
         )
         if not exp_cached:
             changed_env_keys.append(m["expense_key"])
             existing_data[key]["expense"] = (
                 _load_expense_from_sheets(
-                    exp_dfs.get("MONEY RECEIVED"),
-                    exp_dfs.get("ACTIVITY EXP."),
-                    exp_dfs.get("OTHER EXP."),
+                    _get_first(exp_dfs, "MONEY RECEIVED"),
+                    _get_first(exp_dfs, "ACTIVITY EXP.", "ACTIVITY EXPENSES"),
+                    _get_first(exp_dfs, "OTHER EXP.", "OTHER EXPENSES"),
                 )
                 if exp_dfs else _empty_month_data()["expense"]
             )
@@ -498,14 +538,14 @@ async def refresh_changed_from_sheets(
         monthly_id = storage.sheet_id(m["monthly_key"])
         monthly_dfs, monthly_mod, monthly_cached = await _open_and_batch_fetch(
             storage, m["monthly_key"], monthly_id,
-            ["Delegates Reports", "Budget Analysis"]
+            ["Delegates Reports", "DELEGATES", "Budget Analysis", "BUDGET ANALYSIS"],
         )
         if not monthly_cached:
             changed_env_keys.append(m["monthly_key"])
             existing_data[key]["monthly"] = (
                 load_monthly_reports(
-                    df=monthly_dfs.get("Delegates Reports"),
-                    budget_df=monthly_dfs.get("Budget Analysis"),
+                    df=_get_first(monthly_dfs, "Delegates Reports", "DELEGATES"),
+                    budget_df=_get_first(monthly_dfs, "Budget Analysis", "BUDGET ANALYSIS"),
                 )
                 if monthly_dfs else _empty_month_data()["monthly"]
             )
@@ -547,146 +587,21 @@ async def refresh_changed_from_sheets(
     return existing_data, changed_env_keys
 
 
-# ── Expense helper (unchanged from before) ────────────────────────────────────
+# ── Expense helper ────────────────────────────────────────────────────────────
 
-def _load_expense_from_sheets(raw_mr, raw_ae, raw_oe):
-    from constants import FCFA_TO_EUR
-    from utils import safe_num
-    from name_map import normalize_mr, normalize_doctor, normalize_activity, parse_multi_products, activity_display_name
+def _load_expense_from_sheets(raw_mr, raw_ae, raw_oe, canonical_rates: dict = None):
+    """
+    Delegates to load_expense() from loaders.py which uses header-based column
+    detection. canonical_rates ({product_id: rate_eur}) is used to compute
+    Sales_Outcome_EUR values from qty × rate in the ACTIVITY EXPENSES tab.
+    """
+    from loaders import load_expense
 
-    missing_sheets = []
-    mr_df = None
-    total_received_fcfa = 0
-    total_spent_fcfa = 0
-    balance_fcfa = 0
-    opening_balance_fcfa = 0
-    new_budget_fcfa = 0
+    return load_expense(
+        file_bytes=None,
+        df=raw_mr,
+        raw_ae=raw_ae,
+        raw_oe=raw_oe,
+        canonical_rates=canonical_rates or {},
+    )
 
-    if raw_mr is None or (hasattr(raw_mr, "empty") and raw_mr.empty):
-        missing_sheets.append("MONEY RECEIVED")
-    else:
-        mr_rows = []
-        for i, row in raw_mr.iterrows():
-            if i < 2:
-                continue
-            date_val = row.iloc[0]
-            if pd.isna(date_val) or str(date_val).strip() in ("", "NaN", "Date"):
-                continue
-            if "TOTAL" in str(date_val).upper():
-                continue
-            try:
-                date_val = pd.to_datetime(date_val)
-            except Exception:
-                continue
-            mr_rows.append({
-                "Date": date_val,
-                "Source": str(row.iloc[1]).strip(),
-                "Amount_FCFA": safe_num(row.iloc[2]),
-                "Amount_EUR": safe_num(row.iloc[3]),
-                "Description": str(row.iloc[4]).strip(),
-            })
-        mr_df = pd.DataFrame(mr_rows)
-
-        for i, row in raw_mr.iterrows():
-            label     = str(row.iloc[0]).upper()
-            col1_label = str(row.iloc[1]).upper() if len(row) > 1 else ""
-            col5      = str(row.iloc[5]).upper() if len(row) > 5 else ""
-            if "OPENING BALANCE" in col1_label:
-                opening_balance_fcfa = safe_num(row.iloc[2]) if len(row) > 2 else 0
-            elif "RECEIVED ACTIVITY MONEY" in col1_label or "RECEIVED" in col1_label:
-                new_budget_fcfa = safe_num(row.iloc[2]) if len(row) > 2 else 0
-            if "TOTAL" in label and ("RECEIV" in label or "FCFA" in label):
-                v = safe_num(row.iloc[2]) if len(row) > 2 else 0
-                if v > 0:
-                    total_received_fcfa = v
-            if "TOTAL SPENT" in col5:
-                total_spent_fcfa = safe_num(row.iloc[6]) if len(row) > 6 else 0
-            if "BALANCE" in col5:
-                balance_fcfa = safe_num(row.iloc[6]) if len(row) > 6 else 0
-        if total_received_fcfa == 0 and mr_df is not None and not mr_df.empty:
-            total_received_fcfa = mr_df["Amount_FCFA"].sum()
-
-    ae_df = None
-    if raw_ae is None or (hasattr(raw_ae, "empty") and raw_ae.empty):
-        missing_sheets.append("ACTIVITY EXP.")
-    else:
-        ae_rows = []
-        for i, row in raw_ae.iterrows():
-            if i < 2:
-                continue
-            sn = row.iloc[0]
-            if not isinstance(sn, (int, float)) or pd.isna(sn):
-                try:
-                    sn = float(sn)
-                except (ValueError, TypeError):
-                    continue
-            if pd.isna(sn):
-                continue
-            raw_resp = str(row.iloc[8]).strip()
-            if "/" in raw_resp:
-                mr_ids = ",".join(normalize_mr(p.strip()) for p in raw_resp.split("/"))
-            else:
-                mr_ids = normalize_mr(raw_resp)
-            num_mrs = max(1, len([x.strip() for x in mr_ids.split(",") if x.strip()]))
-            amount_fcfa = safe_num(row.iloc[6])
-            ae_rows.append({
-                "SN": int(sn),
-                "Doctor":         normalize_doctor(str(row.iloc[1]).strip()),
-                "Hospital":       str(row.iloc[2]).strip(),
-                "Speciality":     str(row.iloc[3]).strip(),
-                "Activity":       str(row.iloc[4]).strip(),
-                "Activity_ID":    normalize_activity(str(row.iloc[4]).strip()),
-                "Products":       parse_multi_products(str(row.iloc[5]).strip()),
-                "Amount_FCFA":    amount_fcfa,
-                "Amount_EUR":     round(amount_fcfa / FCFA_TO_EUR, 2),
-                "Amount_FCFA_Share": amount_fcfa / num_mrs,
-                "Contact":        str(row.iloc[7]).strip(),
-                "Responsible":    raw_resp,
-                "MR_IDs":         mr_ids,
-                "Num_MRs":        num_mrs,
-            })
-        ae_df = pd.DataFrame(ae_rows)
-        if not ae_df.empty:
-            ae_df["Activity"] = ae_df["Activity_ID"].apply(activity_display_name)
-
-    oe_df = None
-    if raw_oe is None or (hasattr(raw_oe, "empty") and raw_oe.empty):
-        missing_sheets.append("OTHER EXP.")
-    else:
-        oe_rows = []
-        for i, row in raw_oe.iterrows():
-            if i < 2:
-                continue
-            sn = row.iloc[0]
-            if not isinstance(sn, (int, float)) or pd.isna(sn):
-                try:
-                    sn = float(sn)
-                except (ValueError, TypeError):
-                    continue
-            if pd.isna(sn):
-                continue
-            amount_fcfa = safe_num(row.iloc[3])
-            if amount_fcfa == 0:
-                continue
-            oe_rows.append({
-                "SN":          int(sn),
-                "Country":     str(row.iloc[1]).strip(),
-                "Details":     str(row.iloc[2]).strip(),
-                "Amount_FCFA": amount_fcfa,
-                "Amount_EUR":  safe_num(row.iloc[4]),
-                "Comments":    str(row.iloc[5]).strip(),
-                "Category":    str(row.iloc[6]).strip(),
-            })
-        oe_df = pd.DataFrame(oe_rows)
-
-    return {
-        "activity_exp":        ae_df,
-        "other_exp":           oe_df,
-        "money_received":      mr_df,
-        "opening_balance_fcfa": opening_balance_fcfa,
-        "new_budget_fcfa":     new_budget_fcfa,
-        "total_received_fcfa": total_received_fcfa,
-        "total_spent_fcfa":    total_spent_fcfa,
-        "balance_fcfa":        balance_fcfa,
-        "missing_sheets":      missing_sheets,
-    }

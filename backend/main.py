@@ -43,6 +43,27 @@ def _empty_month_shell(month_keys: list[str]) -> dict:
     return {k: {"sales": {}, "projection": {}, "expense": {}, "monthly": {}, "copy": {}, "tour": {}, "visits": {}} for k in month_keys}
 
 
+def _has_shell_data(data: dict) -> bool:
+    """Return True if app_state data has no real loaded content.
+
+    Detects both the explicit empty-shell case (sales={}) and the zeroed-data case
+    that the old startup code produced when load_all_from_sheets got all cache HITs
+    (sales={"current": empty_df, "prev": empty_df}).
+    """
+    for month_data in data.values():
+        if not isinstance(month_data, dict):
+            continue
+        sales = month_data.get("sales")
+        if not isinstance(sales, dict):
+            continue
+        if not sales:
+            return True  # empty dict — explicit shell
+        current = sales.get("current")
+        if hasattr(current, "empty") and current.empty:
+            return True  # empty DataFrame — zeroed from cache-hit startup
+    return False
+
+
 async def eager_recompute(endpoints: list[str]):
     """Call router functions to eagerly populate the Redis API cache."""
     from routers.overview import get_overview
@@ -51,6 +72,7 @@ async def eager_recompute(endpoints: list[str]):
     from routers.delegates import get_delegates
     from routers.expenses import get_expenses
     from routers.insights import get_insights
+    from routers.activities import get_activities
     from fastapi import Request
 
     scope = {"type": "http", "method": "GET"}
@@ -61,6 +83,7 @@ async def eager_recompute(endpoints: list[str]):
         elif ep == "products":    await get_products()
         elif ep == "delegates":   await get_delegates()
         elif ep == "expenses":    await get_expenses()
+        elif ep == "activities":  await get_activities()
         elif ep == "insights":    await get_insights(dummy_req)
         elif ep.startswith("months:"):
             month_key = ep.split(":", 1)[1]
@@ -90,7 +113,7 @@ async def lifespan(app: FastAPI):
         import sheets_loader as _sl
         month_keys = [m["key"] for m in _sl.MONTHS]
         all_endpoints = (
-            ["overview", "products", "delegates", "expenses", "insights"]
+            ["overview", "products", "delegates", "expenses", "activities", "insights"]
             + [f"months:{k}" for k in month_keys]
         )
 
@@ -102,18 +125,21 @@ async def lifespan(app: FastAPI):
             all_cached = all(bool(r) for r in cache_results)
         else:
             all_cached = False
+            cache_results = [None] * len(all_endpoints)
 
-        if all_cached:
-            print("[startup] All data served from Redis cache.")
-            data = _empty_month_shell(month_keys)
-        else:
-            print("[startup] Loading data from Google Drive…")
-            data = await load_all_from_sheets(storage)
-            app_state["data"] = data
-            _build_doctor_index_from_data(data)
+        print("[startup] Loading data from Google Drive…")
+        existing = app_state.get("data", {})
+        data = await load_all_from_sheets(storage, existing_data=existing)
+        app_state["data"] = data
+        _build_doctor_index_from_data(data)
 
-            if redis_ok:
-                await eager_recompute(all_endpoints)
+        if redis_ok:
+            # Only recompute endpoints that are missing from the API cache.
+            stale_endpoints = [ep for ep, cached in zip(all_endpoints, cache_results) if not cached]
+            if stale_endpoints:
+                await eager_recompute(stale_endpoints)
+            else:
+                print("[startup] All API endpoints already cached — skipping recompute.")
 
         # Store dynamic dependency map for the refresh endpoint
         app_state["sheet_dependencies"] = build_sheet_dependencies(month_keys)
@@ -134,7 +160,7 @@ async def lifespan(app: FastAPI):
 
         redis_ok = await health_check()
         all_endpoints = (
-            ["overview", "products", "delegates", "expenses", "insights"]
+            ["overview", "products", "delegates", "expenses", "activities", "insights"]
             + [f"months:{k}" for k in month_keys]
         )
         if redis_ok:
@@ -165,7 +191,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routers import overview, months, products, delegates, expenses, insights
+from routers import overview, months, products, delegates, expenses, insights, activities
 
 app.include_router(overview.router, prefix="/api")
 app.include_router(months.router, prefix="/api")
@@ -173,6 +199,7 @@ app.include_router(products.router, prefix="/api")
 app.include_router(delegates.router, prefix="/api")
 app.include_router(expenses.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
+app.include_router(activities.router, prefix="/api")
 
 
 @app.get("/api/health")
@@ -203,9 +230,44 @@ async def refresh_data():
         storage.discover(folder_id)
 
     from sheets_loader import refresh_changed_from_sheets
-    from cache.redis_client import invalidate_api_keys, build_sheet_dependencies
+    from cache.redis_client import invalidate_api_keys, build_sheet_dependencies, flush_all_api_cache
 
     existing_data = app_state.get("data", {})
+
+    # If server started from Redis cache, app_state["data"] is an empty shell.
+    # Eager-recomputing endpoints against shell data would overwrite good Redis caches
+    # with half-empty results. Force a full fresh load from Drive instead.
+    if _has_shell_data(existing_data):
+        from sheets_loader import load_all_from_sheets
+        from cache.redis_client import redis_client as _rc
+
+        print("[refresh] Detected empty shell — performing full reload from Drive")
+
+        # Clear drive_modified metadata so load_all_from_sheets re-fetches everything
+        drive_keys = await _rc.keys("sheets:*:drive_modified")
+        if drive_keys:
+            await _rc.delete(*drive_keys)
+
+        await flush_all_api_cache()
+
+        existing_data = await load_all_from_sheets(storage, existing_data={})
+        app_state["data"] = existing_data
+        app_state["insights_cache"] = None
+        _build_doctor_index_from_data(existing_data)
+
+        import sheets_loader as _sl
+        month_keys = [m["key"] for m in _sl.MONTHS]
+        sheet_deps = build_sheet_dependencies(month_keys)
+        app_state["sheet_dependencies"] = sheet_deps
+
+        all_endpoints = (
+            ["overview", "products", "delegates", "expenses", "activities", "insights"]
+            + [f"months:{k}" for k in month_keys]
+        )
+        await eager_recompute(all_endpoints)
+
+        return {"status": "ok", "months_loaded": month_keys, "changed_sheets": ["full_reload"]}
+
     updated_data, changed_keys = await refresh_changed_from_sheets(storage, existing_data)
     app_state["data"] = updated_data
     _build_doctor_index_from_data(updated_data)

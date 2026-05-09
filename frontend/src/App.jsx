@@ -5,6 +5,7 @@ import MonthTab from './tabs/MonthTab'
 import ProductsTab from './tabs/ProductsTab'
 import DelegatesTab from './tabs/DelegatesTab'
 import ExpensesTab from './tabs/ExpensesTab'
+import ActivitiesTab from './tabs/ActivitiesTab'
 import { useAvailableMonths } from './hooks/useDashboard'
 
 export default function App() {
@@ -16,12 +17,13 @@ export default function App() {
     prod: <ProductsTab />,
     del:  <DelegatesTab />,
     exp:  <ExpensesTab />,
+    act:  <ActivitiesTab />,
   }
 
   const allPanelKeys = [
     'ov',
     ...availableMonths,
-    'prod', 'del', 'exp',
+    'prod', 'del', 'exp', 'act',
   ]
 
   return (
