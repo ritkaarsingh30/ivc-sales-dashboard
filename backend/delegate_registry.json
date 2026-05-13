@@ -1,0 +1,34 @@
+{
+  "BAZIE": {
+    "id": "MR_007",
+    "display_name": "BAZIE"
+  },
+  "ARRA": {
+    "id": "MR_008",
+    "display_name": "ARRA"
+  },
+  "ARRA/JITENDRA": {
+    "id": "MR_009",
+    "display_name": "ARRA/JITENDRA"
+  },
+  "NONE": {
+    "id": "MR_010",
+    "display_name": "None"
+  },
+  "JAMBA": {
+    "id": "MR_011",
+    "display_name": "JAMBA"
+  },
+  "MR TOUALLY": {
+    "id": "MR_012",
+    "display_name": "MR TOUALLY"
+  },
+  "MME NELLY/JITENDRA": {
+    "id": "MR_013",
+    "display_name": "MME NELLY/JITENDRA"
+  },
+  "PANKAJ SHRIVASTAVA": {
+    "id": "MR_014",
+    "display_name": "PANKAJ SHRIVASTAVA"
+  }
+}

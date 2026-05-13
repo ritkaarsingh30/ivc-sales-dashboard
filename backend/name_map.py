@@ -8,6 +8,8 @@ Fuzzy matching threshold: 70 (safe for most pharma name variants).
 For joint entries like "JITENDRA/CLEMANCE", use resolve_joint_mr().
 """
 
+import json
+import os
 from rapidfuzz import process, fuzz
 
 # ─────────────────────────────────────────────────────────────
@@ -23,6 +25,41 @@ MR_CANONICAL = {
     "MR_006": "JITENDRA MISHRA",   # Country Manager (CM)
     "AGT_001": "ARRA BEHOU",       # Promo Agent (not MR)
 }
+
+# ─────────────────────────────────────────────────────────────
+# Auto-delegate registry — persists new MR IDs across restarts
+# ─────────────────────────────────────────────────────────────
+
+_REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "delegate_registry.json")
+
+def _load_registry() -> dict:
+    """Load {RAW_NAME_UPPER: {id, display_name}} from disk."""
+    if os.path.exists(_REGISTRY_PATH):
+        try:
+            with open(_REGISTRY_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+def _save_registry(registry: dict) -> None:
+    with open(_REGISTRY_PATH, "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2, ensure_ascii=False)
+
+def _next_mr_id() -> str:
+    """Return the next available MR_XXX id (e.g. MR_007)."""
+    existing_nums = []
+    for k in MR_CANONICAL:
+        if k.startswith("MR_") and k[3:].isdigit():
+            existing_nums.append(int(k[3:]))
+    next_num = max(existing_nums, default=0) + 1
+    return f"MR_{next_num:03d}"
+
+# Seed MR_CANONICAL and MR_OVERRIDES from any previously auto-registered delegates
+_AUTO_REGISTRY: dict = _load_registry()
+for _raw, _entry in _AUTO_REGISTRY.items():
+    _id, _name = _entry["id"], _entry["display_name"]
+    MR_CANONICAL.setdefault(_id, _name)
 
 # Hard-coded overrides first (exact/near-exact variants that fuzzy may miss)
 MR_OVERRIDES = {
@@ -93,7 +130,17 @@ def normalize_mr(raw: str) -> str:
         for id_, name in MR_CANONICAL.items():
             if name.upper() == match:
                 return id_
-    return "UNKNOWN"
+
+    # Auto-register: check existing registry first, then create a new entry
+    if clean_upper in _AUTO_REGISTRY:
+        return _AUTO_REGISTRY[clean_upper]["id"]
+
+    new_id = _next_mr_id()
+    display = clean  # preserve original casing as display name
+    _AUTO_REGISTRY[clean_upper] = {"id": new_id, "display_name": display}
+    MR_CANONICAL[new_id] = display
+    _save_registry(_AUTO_REGISTRY)
+    return new_id
 
 def mr_display_name(mr_id: str) -> str:
     """Convert MR_001 -> 'NELLY NIAMIEN'. Handles comma-separated joint IDs."""
