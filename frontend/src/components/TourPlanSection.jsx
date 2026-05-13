@@ -1,7 +1,6 @@
 import { Bar, Doughnut } from 'react-chartjs-2'
 import SectionLabel from './SectionLabel'
 import ChartCard from './ChartCard'
-import KpiCard from './KpiCard'
 import DataTable from './DataTable'
 import Badge from './Badge'
 import { baseOptions, baseOptionsNoScale } from '../utils/chartConfig'
@@ -138,15 +137,6 @@ export default function TourPlanSection({ tourPlan = {}, cfg }) {
         text="TOUR PLAN — FIELD COVERAGE"
         monthColor={cfg.sectionCls}
       />
-
-      {/* ── Summary KPIs ── */}
-      <div className="kpi-grid">
-        <KpiCard label="Days Planned"       value={s.total}             monthColor={cfg.cls} />
-        <KpiCard label="Days Covered"       value={s.covered}           sub={`${s.coverage_pct}% adherence`} monthColor="g" />
-        <KpiCard label="Days Missed"        value={s.uncovered}         monthColor={s.uncovered > 0 ? 'd' : 'g'} />
-        <KpiCard label="Active Delegates"   value={s.delegates_active}  monthColor={cfg.cls} />
-        <KpiCard label="Joint Working Days" value={s.joint_working}     sub="CM accompanied visits" monthColor={cfg.cls} />
-      </div>
 
       {/* ── Charts ── */}
       <div className="grid-2">
