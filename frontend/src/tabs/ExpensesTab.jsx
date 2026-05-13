@@ -5,6 +5,7 @@ import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
 import SalesOutcomeCell from '../components/SalesOutcomeCell'
 import { baseOptions, baseOptionsNoScale, COLORS, PALETTE } from '../utils/chartConfig'
+import { MONTH_CONFIG } from '../utils/monthConfig'
 
 const FCFA_TO_EUR = 655.97
 
@@ -26,19 +27,18 @@ function fmtEur(n) {
   return n ? `€${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'
 }
 
-
 const EXP_COLS = [
-  { key: 'sn',             label: '#' },
-  { key: 'doctor',         label: 'Doctor / Contact' },
-  { key: 'hospital',       label: 'Hospital' },
-  { key: 'activity_badge', label: 'Activity' },
-  { key: 'products',       label: 'Products' },
-  { key: 'amount_fcfa_fmt',label: 'FCFA' },
-  { key: 'amount_eur_fmt', label: 'Amount €' },
+  { key: 'sn',                 label: '#' },
+  { key: 'doctor',             label: 'Doctor / Contact' },
+  { key: 'hospital',           label: 'Hospital' },
+  { key: 'activity_badge',     label: 'Activity' },
+  { key: 'products',           label: 'Products' },
+  { key: 'amount_fcfa_fmt',    label: 'FCFA' },
+  { key: 'amount_eur_fmt',     label: 'Amount €' },
   { key: 'sales_outcome_cell', label: 'Sales Outcome' },
-  { key: 'sales_value_fmt',label: 'Sales Value €' },
-  { key: 'visits_fmt',     label: 'Visits' },
-  { key: 'responsible',    label: 'Responsible' },
+  { key: 'sales_value_fmt',    label: 'Sales Value €' },
+  { key: 'visits_fmt',         label: 'Visits' },
+  { key: 'responsible',        label: 'Responsible' },
 ]
 
 function buildRows(rows) {
@@ -53,12 +53,6 @@ function buildRows(rows) {
   }))
 }
 
-const MONTH_CFG = [
-  { key: 'jan', label: 'January',  sectionColor: 'jan-s', badgeVariant: 'j' },
-  { key: 'feb', label: 'February', sectionColor: 'feb-s', badgeVariant: 'f' },
-  { key: 'mar', label: 'March',    sectionColor: 'mar-s', badgeVariant: 'm' },
-]
-
 export default function ExpensesTab() {
   const { data, isLoading, isError } = useExpenses()
   if (isLoading) return <div className="loading">⟳ Loading expenses data...</div>
@@ -67,6 +61,9 @@ export default function ExpensesTab() {
   const bf  = data.budget_flow || []
   const att = data.activity_type_totals || []
   const ebm = data.expenses_by_month || {}
+
+  // Build dynamic month label for chart subtitle from what's actually loaded
+  const loadedLabels = bf.map(r => r.month).join(' · ')
 
   const budgetData = {
     labels: bf.map(r => r.month),
@@ -98,13 +95,19 @@ export default function ExpensesTab() {
     }]
   }
 
-  const totalSpent = bf.reduce((s, r) => s + (r.spent_fcfa || 0), 0)
+  // Dynamic list: all months from MONTH_CONFIG that have expense data
+  const activeMonths = Object.entries(MONTH_CONFIG)
+    .filter(([key]) => (ebm[key] || []).length > 0)
 
   return (
     <div>
-      <SectionLabel tag="EXPENSES" text="Q1 BUDGET FLOW" monthColor="exp-s" />
+      <SectionLabel tag="EXPENSES" text="BUDGET FLOW" monthColor="exp-s" />
       <div className="full">
-        <ChartCard title="Budget Received vs Spent — January · February · March" sub="FCFA values — larger deficit visible in March" height="h250">
+        <ChartCard
+          title={`Budget Received vs Spent — ${loadedLabels || 'All Months'}`}
+          sub="FCFA values"
+          height="h250"
+        >
           <Bar data={budgetData} options={baseOptions()} />
         </ChartCard>
       </div>
@@ -114,14 +117,13 @@ export default function ExpensesTab() {
         <ChartCard title="Closing Balance by Month (€)" sub="Negative = budget overrun" height="h200">
           <Line data={spendRateData} options={baseOptions()} />
         </ChartCard>
-        <ChartCard title="Activity Type Distribution (FCFA)" sub="Top 8 activity categories Q1" height="h200">
+        <ChartCard title="Activity Type Distribution (FCFA)" sub="Top 8 activity categories" height="h200">
           <Doughnut data={actTypeData} options={baseOptionsNoScale()} />
         </ChartCard>
       </div>
 
-      {MONTH_CFG.map(({ key, label, sectionColor, badgeVariant }) => {
+      {activeMonths.map(([key, cfg]) => {
         const rows = ebm[key] || []
-        if (rows.length === 0) return null
         const spent = rows.reduce((s, r) => s + (r.amount_fcfa || 0), 0)
         const outcomeTotal = rows.reduce((s, r) => s + (r.sales_outcome_eur || 0), 0)
         const badgeText = `${rows.length} entries · FCFA ${Math.round(spent).toLocaleString()} · €${(spent / FCFA_TO_EUR).toFixed(0)}`
@@ -129,10 +131,10 @@ export default function ExpensesTab() {
 
         return (
           <div key={key}>
-            <SectionLabel tag="EXPENSES" text={`${label.toUpperCase()} — ACTIVITY EXPENSES`} monthColor={sectionColor} />
+            <SectionLabel tag="EXPENSES" text={`${cfg.label.toUpperCase()} — ACTIVITY EXPENSES`} monthColor={cfg.sectionCls} />
             <DataTable
-              title={`Activity Expenses — ${label} 2026`}
-              badge={{ text: badgeText, variant: badgeVariant }}
+              title={`Activity Expenses — ${cfg.label} 2026`}
+              badge={{ text: badgeText, variant: cfg.cls }}
               columns={EXP_COLS}
               rows={buildRows(rows)}
             />
