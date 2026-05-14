@@ -186,7 +186,8 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:3000",
-        "https://ivc-sales-dashboard-production.up.railway.app"
+        "https://ivc-sales-dashboard-production.up.railway.app",
+        *([u] if (u := os.getenv("FRONTEND_URL", "")) else []),  # Vercel URL via env var
     ],
     allow_methods=["*"],
     allow_headers=["*"],
