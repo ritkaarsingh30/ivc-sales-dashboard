@@ -5,7 +5,8 @@ import SectionLabel from '../components/SectionLabel'
 import ChartCard from '../components/ChartCard'
 import DataTable from '../components/DataTable'
 import Badge from '../components/Badge'
-import { baseOptions, COLORS, PALETTE } from '../utils/chartConfig'
+import { baseOptions, COLORS, monthColor } from '../utils/chartConfig'
+import { MONTH_CONFIG, MONTH_KEYS } from '../utils/monthConfig'
 
 /* ── helpers ─────────────────────────────────────────────── */
 const fmtEur = n => (n != null && n !== 0) ? `€${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'
@@ -131,25 +132,37 @@ export default function DelegatesTab() {
   const summ = data.q1_summary   || {}
   const ctcR = data.ctc_ratios   || []
 
-  const names  = dls.map(d => d.short_name || d.display_name)   // chart labels
-  const labels = dls.map(d => d.display_name)                    // table / scorecard
+  // Derive loaded months in calendar order from the first delegate's months object
+  const months = MONTH_KEYS.filter(k => dls[0]?.months && k in dls[0].months)
+  const periodLabel = months.length > 0
+    ? `${MONTH_CONFIG[months[0]].short} – ${MONTH_CONFIG[months[months.length - 1]].short} 2026`
+    : '2026'
+  const monthDotLabel = months.map(k => MONTH_CONFIG[k].short).join(' · ')
 
-  /* ── Calls trend (grouped bar per delegate) ── */
+  const names = dls.map(d => d.short_name || d.display_name)
+
+  /* ── Calls trend: one bar dataset per month ── */
   const callsTrendData = {
     labels: names,
-    datasets: [
-      { label: 'January',  data: dls.map(d => d.months.jan?.calls || 0), backgroundColor: COLORS.janA, borderColor: COLORS.jan, borderWidth: 1, borderRadius: 3 },
-      { label: 'February', data: dls.map(d => d.months.feb?.calls || 0), backgroundColor: COLORS.febA, borderColor: COLORS.feb, borderWidth: 1, borderRadius: 3 },
-      { label: 'March',    data: dls.map(d => d.months.mar?.calls || 0), backgroundColor: COLORS.marA, borderColor: COLORS.mar, borderWidth: 1, borderRadius: 3 },
-    ],
+    datasets: months.map(mk => {
+      const mc = monthColor(mk)
+      return {
+        label: MONTH_CONFIG[mk].label,
+        data: dls.map(d => d.months[mk]?.calls || 0),
+        backgroundColor: mc.alpha,
+        borderColor: mc.solid,
+        borderWidth: 1,
+        borderRadius: 3,
+      }
+    }),
   }
 
-  /* ── Drs Converted trend (line per delegate) ── */
+  /* ── Drs Converted: line per delegate across all months ── */
   const drsData = {
-    labels: ['January', 'February', 'March'],
+    labels: months.map(k => MONTH_CONFIG[k].label),
     datasets: dls.map((d, i) => ({
       label: d.display_name,
-      data: ['jan','feb','mar'].map(k => d.months[k]?.drs_converted || 0),
+      data: months.map(k => d.months[k]?.drs_converted || 0),
       borderColor: DEL_COLORS[i % DEL_COLORS.length].solid,
       backgroundColor: 'transparent',
       tension: 0.35,
@@ -179,13 +192,20 @@ export default function DelegatesTab() {
     ],
   }
 
-  /* ── CTC Ratio per delegate across months ── */
+  /* ── CTC Ratio: one dataset per loaded month ── */
+  const ctcMonths = ctcR.length > 0
+    ? MONTH_KEYS.filter(k => k in ctcR[0] && ctcR[0][k] !== undefined)
+    : months
   const ctcChartData = {
     labels: ctcR.map(r => r.mr),
-    datasets: [
-      { label: 'Jan CTC %', data: ctcR.map(r => r.jan), backgroundColor: ctcR.map(r => ctcColor(r.jan) + '99'), borderColor: ctcR.map(r => ctcColor(r.jan)), borderWidth: 1.5, borderRadius: 3 },
-      { label: 'Mar CTC %', data: ctcR.map(r => r.mar), backgroundColor: ctcR.map(r => ctcColor(r.mar) + '66'), borderColor: ctcR.map(r => ctcColor(r.mar)), borderWidth: 1.5, borderRadius: 3 },
-    ],
+    datasets: ctcMonths.map(mk => ({
+      label: `${MONTH_CONFIG[mk].short} CTC %`,
+      data: ctcR.map(r => r[mk] ?? null),
+      backgroundColor: ctcR.map(r => ctcColor(r[mk]) + '99'),
+      borderColor: ctcR.map(r => ctcColor(r[mk])),
+      borderWidth: 1.5,
+      borderRadius: 3,
+    })),
   }
 
   const ctcChartOptions = {
@@ -253,15 +273,15 @@ export default function DelegatesTab() {
 
   return (
     <div>
-      {/* ── Q1 Summary KPIs ── */}
-      <SectionLabel tag="DELEGATES" text="Q1 FIELD FORCE SUMMARY" monthColor="del-s" />
+      {/* ── Summary KPIs ── */}
+      <SectionLabel tag="DELEGATES" text="FIELD FORCE SUMMARY" monthColor="del-s" />
       <div className="kpi-grid">
-        <KpiCard label="Total Calls — Q1"       value={(summ.total_calls ?? 0).toLocaleString()}    monthColor="q" />
-        <KpiCard label="Prescriber Calls"        value={(summ.total_prescriber ?? 0).toLocaleString()} monthColor="q" />
-        <KpiCard label="Pharmacy Calls"          value={(summ.total_pharmacy ?? 0).toLocaleString()}   monthColor="q" />
-        <KpiCard label="Drs Converted — Q1"      value={summ.total_drs ?? 0}                           monthColor={summ.total_drs > 0 ? 'g' : 'd'} />
-        <KpiCard label="Total Orders — Q1"       value={fmtEur(summ.total_orders_eur)}                 monthColor="g" />
-        <KpiCard label="Total CTC — Q1"          value={fmtEur(summ.total_ctc_eur)}                    monthColor="d" />
+        <KpiCard label={`Total Calls — ${periodLabel}`}    value={(summ.total_calls ?? 0).toLocaleString()}       monthColor="q" />
+        <KpiCard label="Prescriber Calls"                  value={(summ.total_prescriber ?? 0).toLocaleString()}   monthColor="q" />
+        <KpiCard label="Pharmacy Calls"                    value={(summ.total_pharmacy ?? 0).toLocaleString()}     monthColor="q" />
+        <KpiCard label={`Drs Converted — ${periodLabel}`} value={summ.total_drs ?? 0}                             monthColor={summ.total_drs > 0 ? 'g' : 'd'} />
+        <KpiCard label={`Total Orders — ${periodLabel}`}  value={fmtEur(summ.total_orders_eur)}                   monthColor="g" />
+        <KpiCard label={`Total CTC — ${periodLabel}`}     value={fmtEur(summ.total_ctc_eur)}                      monthColor="d" />
         <KpiCard
           label="Overall CTC Ratio"
           value={fmtPct(summ.overall_ctc_ratio)}
@@ -277,7 +297,7 @@ export default function DelegatesTab() {
       </div>
 
       {/* ── Per-Delegate Scorecards ── */}
-      <SectionLabel tag="DELEGATES" text="DELEGATE SCORECARDS — Q1 2026" monthColor="del-s" />
+      <SectionLabel tag="DELEGATES" text={`DELEGATE SCORECARDS — ${periodLabel}`} monthColor="del-s" />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px', marginBottom: '24px' }}>
         {dls.map((d, i) => (
           <DelegateScorecard key={d.id} d={d} color={DEL_COLORS[i % DEL_COLORS.length]} />
@@ -287,10 +307,10 @@ export default function DelegatesTab() {
       {/* ── Calls + Drs Converted ── */}
       <SectionLabel tag="DELEGATES" text="ACTIVITY ANALYSIS" monthColor="del-s" />
       <div className="grid-2">
-        <ChartCard title="Total Calls by Delegate — Jan · Feb · Mar" sub="Call volume trend across Q1" height="h300">
+        <ChartCard title={`Total Calls by Delegate — ${monthDotLabel}`} sub="Call volume trend across all loaded months" height="h300">
           <Bar data={callsTrendData} options={baseOptions()} />
         </ChartCard>
-        <ChartCard title="Doctors Converted — Monthly Trend" sub="Conversion performance per delegate" height="h300">
+        <ChartCard title="Doctors Converted — Monthly Trend" sub={`Conversion performance per delegate (${periodLabel})`} height="h300">
           <Line data={drsData} options={baseOptions()} />
         </ChartCard>
       </div>
@@ -299,15 +319,15 @@ export default function DelegatesTab() {
       <SectionLabel tag="DELEGATES" text="CTC vs ORDERS — ROI ANALYSIS" monthColor="del-s" />
       <div className="grid-2">
         <ChartCard
-          title="Q1 Orders vs CTC Investment per Delegate"
+          title={`Orders vs CTC Investment per Delegate — ${periodLabel}`}
           sub="Green = orders generated · Red = CTC cost · Bar above red = profitable"
           height="h300"
         >
           <Bar data={roiData} options={baseOptions()} />
         </ChartCard>
         <ChartCard
-          title="⚠️ CTC Ratio — Jan vs Mar (Feb: no order data)"
-          sub="CTC ÷ Orders × 100 — target ≤ 25% · all delegates significantly over"
+          title={`⚠️ CTC Ratio by Month — ${monthDotLabel}`}
+          sub="CTC ÷ Orders × 100 — target ≤ 25% · months with no order data show null"
           height="h300"
         >
           <Bar data={ctcChartData} options={ctcChartOptions} />
@@ -317,15 +337,15 @@ export default function DelegatesTab() {
       {/* ── Days Utilization ── */}
       <SectionLabel tag="DELEGATES" text="DAYS WORKED vs TARGET" monthColor="del-s" />
       <div className="full">
-        <ChartCard title="Q1 Days Worked vs Target per Delegate" sub="Purple = days worked · Grey = target" height="h250">
+        <ChartCard title={`Days Worked vs Target per Delegate — ${periodLabel}`} sub="Purple = days worked · Grey = target" height="h250">
           <Bar data={daysData} options={baseOptions()} />
         </ChartCard>
       </div>
 
       {/* ── Q1 Master Table ── */}
-      <SectionLabel tag="DELEGATES" text="Q1 MASTER SCORECARD" monthColor="del-s" />
+      <SectionLabel tag="DELEGATES" text="YTD MASTER SCORECARD" monthColor="del-s" />
       <DataTable
-        title="Delegate Performance — Full Q1 2026"
+        title={`Delegate Performance — ${periodLabel}`}
         badge={{ text: `${dls.length} delegates · CTC target ≤ 25%`, variant: 'q' }}
         columns={tblCols}
         rows={tblRows}

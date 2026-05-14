@@ -162,12 +162,6 @@ export default function OverviewTab() {
           )
         })}
         <KpiCard
-          label="Annual Target"
-          value={`€${(q1.annual_target_eur || 205000).toLocaleString()}`}
-          sub={`${periodLabel} = ${fmtPct(q1.annual_achievement_pct)} achieved`}
-          monthColor="q"
-        />
-        <KpiCard
           label="Total Visits"
           value={(q1.total_visits_all ?? q1.total_visits_q1 ?? 0).toLocaleString()}
           sub={visitsSub}
