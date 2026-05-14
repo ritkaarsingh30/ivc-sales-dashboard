@@ -120,26 +120,60 @@ def _compute_findings(overview: dict, delegates: dict, expenses: dict) -> list[d
             ]
         })
 
-    # 3. WARN — Sales target shortfall
-    best_mk = max(months, key=lambda k: _sf(months[k].get("achievement", 0))) if months else None
-    worst_mk = min(months, key=lambda k: _sf(months[k].get("achievement", 100))) if months else None
-    if worst_mk and _sf(months[worst_mk].get("achievement", 100)) < 70:
-        bm = months[best_mk]
-        wm = months[worst_mk]
-        findings.append({
-            "type": "warn",
-            "icon": "📉",
-            "title": "SALES TARGET SHORTFALL",
-            "facts": [
-                f"YTD sales total {ytd_sales} EUR — only {ytd_pct}% of the {annual_target:,} EUR annual target.",
-                f"Best month: {bm.get('month', best_mk)} at {_sf(bm.get('achievement', 0))}% achievement "
-                f"({_sf(bm.get('sales', 0))} EUR vs {_sf(bm.get('projection', 0))} EUR target).",
-                f"Weakest month: {wm.get('month', worst_mk)} at {_sf(wm.get('achievement', 0))}% achievement "
-                f"({_sf(wm.get('sales', 0))} EUR vs {_sf(wm.get('projection', 0))} EUR target).",
+    # 3. INFO/GOOD/WARN — Month-over-month sales trend
+    ordered_mks = [k for k in _MONTH_ORDER if k in months]
+    if len(ordered_mks) >= 2:
+        mom_changes = []
+        for i in range(1, len(ordered_mks)):
+            prev_mk, curr_mk = ordered_mks[i - 1], ordered_mks[i]
+            prev_sales = _sf(months[prev_mk].get("sales", 0))
+            curr_sales = _sf(months[curr_mk].get("sales", 0))
+            if prev_sales > 0:
+                pct = round((curr_sales - prev_sales) / prev_sales * 100, 1)
+                mom_changes.append({
+                    "from": months[prev_mk].get("month", prev_mk),
+                    "to": months[curr_mk].get("month", curr_mk),
+                    "from_eur": prev_sales,
+                    "to_eur": curr_sales,
+                    "change_pct": pct,
+                })
+
+        if mom_changes:
+            latest = mom_changes[-1]
+            positive_moves = [c for c in mom_changes if c["change_pct"] > 0]
+            negative_moves = [c for c in mom_changes if c["change_pct"] < 0]
+            trend_type = "good" if latest["change_pct"] > 0 else "warn"
+            trend_icon = "📈" if latest["change_pct"] > 0 else "📉"
+
+            facts = [
+                f"Month-over-month sales: "
+                + ", ".join(
+                    f"{c['from'][:3]}→{c['to'][:3]} {'+' if c['change_pct'] >= 0 else ''}{c['change_pct']}%"
+                    for c in mom_changes
+                ) + ".",
+                f"Most recent move: {latest['from']} ({latest['from_eur']} EUR) → "
+                f"{latest['to']} ({latest['to_eur']} EUR), "
+                f"a {'gain' if latest['change_pct'] > 0 else 'drop'} of {abs(latest['change_pct'])}%.",
             ]
-        })
+            if positive_moves and negative_moves:
+                facts.append(
+                    f"{len(positive_moves)} growth month(s) and {len(negative_moves)} decline(s) recorded so far — "
+                    f"sales momentum is mixed."
+                )
+            elif positive_moves:
+                facts.append(f"All {len(positive_moves)} month-over-month moves show growth — consistent upward momentum.")
+            else:
+                facts.append(f"All {len(negative_moves)} month-over-month moves show decline — a reversal is needed.")
+
+            findings.append({
+                "type": trend_type,
+                "icon": trend_icon,
+                "title": "MONTH-OVER-MONTH TREND",
+                "facts": facts,
+            })
 
     # 4. GOOD — Best month + top product
+    best_mk = max(months, key=lambda k: _sf(months[k].get("sales", 0))) if months else None
     if best_mk and product_totals:
         bm = months[best_mk]
         top = product_totals[0]
