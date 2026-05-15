@@ -180,6 +180,9 @@ app = FastAPI(
     default_response_class=NaNSafeJSONResponse,
 )
 
+_extra_origins = [
+    u.strip() for u in os.getenv("FRONTEND_URL", "").split(",") if u.strip()
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -187,7 +190,7 @@ app.add_middleware(
         "http://localhost:5174",
         "http://localhost:3000",
         "https://ivc-sales-dashboard-production.up.railway.app",
-        *([u] if (u := os.getenv("FRONTEND_URL", "")) else []),  # Vercel URL via env var
+        *_extra_origins,
     ],
     allow_methods=["*"],
     allow_headers=["*"],
