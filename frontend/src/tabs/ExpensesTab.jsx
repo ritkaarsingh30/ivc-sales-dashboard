@@ -129,6 +129,24 @@ export default function ExpensesTab() {
         const badgeText = `${rows.length} entries · FCFA ${Math.round(spent).toLocaleString()} · €${(spent / FCFA_TO_EUR).toFixed(0)}`
           + (outcomeTotal > 0 ? ` · Outcomes €${outcomeTotal.toFixed(0)}` : '')
 
+          const totalFcfa    = rows.reduce((s, r) => s + (r.amount_fcfa       || 0), 0)
+        const totalEur     = rows.reduce((s, r) => s + (r.amount_eur        || 0), 0)
+        const totalOutcome = rows.reduce((s, r) => s + (r.sales_outcome_eur || 0), 0)
+        const totalVisits  = rows.reduce((s, r) => s + (r.num_visits        || 0), 0)
+        const expTotalRow = rows.length > 0 ? {
+          sn:                 'TOTAL',
+          doctor:             '',
+          hospital:           '',
+          activity_badge:     '',
+          products:           '',
+          amount_fcfa_fmt:    fmtFcfa(Math.round(totalFcfa)),
+          amount_eur_fmt:     fmtEur(totalEur),
+          sales_outcome_cell: '',
+          sales_value_fmt:    totalOutcome > 0 ? fmtEur(totalOutcome) : '—',
+          visits_fmt:         totalVisits > 0 ? totalVisits : '—',
+          responsible:        '',
+        } : null
+
         return (
           <div key={key}>
             <SectionLabel tag="EXPENSES" text={`${cfg.label.toUpperCase()} — ACTIVITY EXPENSES`} monthColor={cfg.sectionCls} />
@@ -137,6 +155,7 @@ export default function ExpensesTab() {
               badge={{ text: badgeText, variant: cfg.cls }}
               columns={EXP_COLS}
               rows={buildRows(rows)}
+              totalRow={expTotalRow}
             />
           </div>
         )

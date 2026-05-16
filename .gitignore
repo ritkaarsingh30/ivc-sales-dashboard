@@ -4,3 +4,4 @@ venv
 .env
 frontend/node_modules
 __pycache__
+generate_tour_template.py

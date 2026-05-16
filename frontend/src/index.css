@@ -477,6 +477,7 @@ tr:hover td { background:rgba(255,255,255,.02); }
 .vt-dim { font-size:11px; color:var(--text-muted); }
 .vt-doctors { font-size:12px; color:var(--text); }
 .vt-dates { font-size:11px; color:var(--text-muted); }
+.vt-empty-day td { opacity:0.35; }
 
 /* ABM INSIGHTS HEADER */
 .insights-header {

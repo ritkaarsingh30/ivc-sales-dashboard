@@ -4,6 +4,7 @@ import SectionLabel from './SectionLabel'
 import ChartCard from './ChartCard'
 import Badge from './Badge'
 import { baseOptions } from '../utils/chartConfig'
+import { getMonthAllDates } from '../utils/monthConfig'
 
 const DELEGATE_COLORS = [
   { bg: 'rgba(59,130,246,0.55)',  bd: 'rgba(59,130,246,1)'  },
@@ -14,16 +15,18 @@ const DELEGATE_COLORS = [
   { bg: 'rgba(251,146,60,0.55)', bd: 'rgba(251,146,60,1)'  },
 ]
 
-function buildDateView(visits) {
+function buildDateView(visits, allDates) {
   const byDate = {}
   for (const v of visits) {
     if (!v.date) continue
     if (!byDate[v.date]) byDate[v.date] = []
     byDate[v.date].push(v.doctor)
   }
-  return Object.entries(byDate)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, doctors]) => ({ date, count: doctors.length, doctors }))
+  return allDates.map(date => ({
+    date,
+    count: (byDate[date] || []).length,
+    doctors: byDate[date] || [],
+  }))
 }
 
 function buildDoctorView(visits) {
@@ -53,6 +56,8 @@ export default function VisitTrackerSection({ visitTracker = {}, cfg }) {
   const delegates = visitTracker.by_delegate || []
   if (!delegates.length) return null
 
+  const allDates = cfg.monthNum ? getMonthAllDates(cfg.monthNum) : []
+
   return (
     <>
       <SectionLabel tag={cfg.label.toUpperCase()} text="VISIT TRACKER — FIELD VISITS" monthColor={cfg.sectionCls} />
@@ -75,7 +80,7 @@ export default function VisitTrackerSection({ visitTracker = {}, cfg }) {
 
       {delegates.map((del, idx) => {
         const color = DELEGATE_COLORS[idx % DELEGATE_COLORS.length]
-        const dateView   = buildDateView(del.visits)
+        const dateView   = buildDateView(del.visits, allDates)
         const doctorView = buildDoctorView(del.visits)
 
         let chartData, chartOpts
@@ -178,9 +183,9 @@ export default function VisitTrackerSection({ visitTracker = {}, cfg }) {
                     </thead>
                     <tbody>
                       {dateView.map(row => (
-                        <tr key={row.date}>
+                        <tr key={row.date} className={row.count === 0 ? 'vt-empty-day' : ''}>
                           <td className="vt-mono">{row.date}</td>
-                          <td><Badge text={row.count} variant={cfg.cls} /></td>
+                          <td>{row.count > 0 ? <Badge text={row.count} variant={cfg.cls} /> : ''}</td>
                           <td className="vt-doctors">{row.doctors.join(' · ')}</td>
                         </tr>
                       ))}

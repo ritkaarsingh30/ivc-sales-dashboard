@@ -102,6 +102,25 @@ export default function MonthTab({ month }) {
     visits_fmt:         r.num_visits > 0 ? r.num_visits : '—',
   }))
 
+  const aeTotalFcfa    = ae.reduce((s, r) => s + (r.amount_fcfa || 0), 0)
+  const aeTotalEur     = ae.reduce((s, r) => s + (r.amount_eur  || 0), 0)
+  const aeTotalOutcome = ae.reduce((s, r) => s + (r.sales_outcome_eur || 0), 0)
+  const aeTotalVisits  = ae.reduce((s, r) => s + (r.num_visits || 0), 0)
+  const aeTotalRow = ae.length > 0 ? {
+    sn:                 'TOTAL',
+    doctor:             '',
+    hospital:           '',
+    speciality:         '',
+    activity_badge:     '',
+    products:           '',
+    amount_fcfa:        Math.round(aeTotalFcfa).toLocaleString(),
+    amount_eur:         `€${aeTotalEur.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    sales_outcome_cell: '',
+    sales_value_fmt:    aeTotalOutcome > 0 ? `€${aeTotalOutcome.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—',
+    visits_fmt:         aeTotalVisits > 0 ? aeTotalVisits : '—',
+    responsible:        '',
+  } : null
+
   const dsCols = [
     { key: 'distributor',       label: 'Distributor' },
     { key: 'sales_eur',         label: 'Sales (€)' },
@@ -204,7 +223,7 @@ export default function MonthTab({ month }) {
           text: `${isOverrun ? '⚠️ OVERRUN · ' : ''}FCFA ${(k.activity_spent_fcfa||0).toLocaleString()} | €${(k.activity_spent_eur||0).toLocaleString()}`,
           variant: isOverrun ? 'd' : CFG.cls,
         }}
-        borderColor={CFG.color} columns={AE_COLS} rows={aeRows}
+        borderColor={CFG.color} columns={AE_COLS} rows={aeRows} totalRow={aeTotalRow}
       />
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="DISTRIBUTOR-WISE SALES" monthColor={CFG.sectionCls} />
