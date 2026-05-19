@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable'
 import SalesOutcomeCell from '../components/SalesOutcomeCell'
 import { baseOptions, baseOptionsNoScale, COLORS, PALETTE } from '../utils/chartConfig'
 import { MONTH_CONFIG } from '../utils/monthConfig'
+import { useFilter } from '../context/FilterContext'
 
 const FCFA_TO_EUR = 655.97
 
@@ -55,6 +56,8 @@ function buildRows(rows) {
 
 export default function ExpensesTab() {
   const { data, isLoading, isError } = useExpenses()
+  const { activeMonths: filteredMonths } = useFilter()
+
   if (isLoading) return <div className="loading">⟳ Loading expenses data...</div>
   if (isError) return <div className="error">✕ Failed to load expenses data. Is the backend running?</div>
 
@@ -62,23 +65,24 @@ export default function ExpensesTab() {
   const att = data.activity_type_totals || []
   const ebm = data.expenses_by_month || {}
 
-  // Build dynamic month label for chart subtitle from what's actually loaded
-  const loadedLabels = bf.map(r => r.month).join(' · ')
+  // Filter budget_flow rows to selected months
+  const bfFiltered = bf.filter(r => filteredMonths.includes(r.month?.toLowerCase().slice(0, 3)))
+  const loadedLabels = bfFiltered.map(r => r.month).join(' · ')
 
   const budgetData = {
-    labels: bf.map(r => r.month),
+    labels: bfFiltered.map(r => r.month),
     datasets: [
-      { label: 'Received (FCFA)', data: bf.map(r => r.received_fcfa), backgroundColor: COLORS.q1A,     borderColor: COLORS.q1,     borderWidth: 1 },
-      { label: 'Spent (FCFA)',    data: bf.map(r => r.spent_fcfa),    backgroundColor: COLORS.dangerA, borderColor: COLORS.danger, borderWidth: 1 },
+      { label: 'Received (FCFA)', data: bfFiltered.map(r => r.received_fcfa), backgroundColor: COLORS.q1A,     borderColor: COLORS.q1,     borderWidth: 1 },
+      { label: 'Spent (FCFA)',    data: bfFiltered.map(r => r.spent_fcfa),    backgroundColor: COLORS.dangerA, borderColor: COLORS.danger, borderWidth: 1 },
     ]
   }
 
   const spendRateData = {
-    labels: bf.map(r => r.month),
+    labels: bfFiltered.map(r => r.month),
     datasets: [{
       label: 'Balance (€)',
-      data:  bf.map(r => r.balance_eur),
-      borderColor: bf.map(r => (r.balance_eur ?? 0) >= 0 ? COLORS.good : COLORS.danger),
+      data:  bfFiltered.map(r => r.balance_eur),
+      borderColor: bfFiltered.map(r => (r.balance_eur ?? 0) >= 0 ? COLORS.good : COLORS.danger),
       backgroundColor: 'transparent',
       tension: 0.3,
       pointRadius: 6,
@@ -95,9 +99,9 @@ export default function ExpensesTab() {
     }]
   }
 
-  // Dynamic list: all months from MONTH_CONFIG that have expense data
-  const activeMonths = Object.entries(MONTH_CONFIG)
-    .filter(([key]) => (ebm[key] || []).length > 0)
+  // Dynamic list: months with expense data, intersected with active filter
+  const monthsWithData = Object.entries(MONTH_CONFIG)
+    .filter(([key]) => (ebm[key] || []).length > 0 && filteredMonths.includes(key))
 
   return (
     <div>
@@ -122,7 +126,7 @@ export default function ExpensesTab() {
         </ChartCard>
       </div>
 
-      {activeMonths.map(([key, cfg]) => {
+      {monthsWithData.map(([key, cfg]) => {
         const rows = ebm[key] || []
         const spent = rows.reduce((s, r) => s + (r.amount_fcfa || 0), 0)
         const outcomeTotal = rows.reduce((s, r) => s + (r.sales_outcome_eur || 0), 0)

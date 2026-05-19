@@ -6,6 +6,7 @@ import KpiCard from '../components/KpiCard'
 import DataTable from '../components/DataTable'
 import { baseOptions, baseOptionsNoScale, COLORS, monthColor } from '../utils/chartConfig'
 import { MONTH_CONFIG, MONTH_KEYS } from '../utils/monthConfig'
+import { useFilter } from '../context/FilterContext'
 
 function fmt(n, decimals = 0) {
   if (n === null || n === undefined) return '—'
@@ -18,6 +19,8 @@ function fmtUnits(n) {
 
 export default function ProductsTab() {
   const { data, isLoading, isError } = useProducts()
+  const { activeMonths: filteredMonths } = useFilter()
+
   if (isLoading) return <div className="loading">⟳ Loading products data...</div>
   if (isError) return <div className="error">✕ Failed to load products data. Is the backend running?</div>
 
@@ -26,10 +29,10 @@ export default function ProductsTab() {
   const avq   = data.annual_vs_q1 || []
   const cm    = data.category_mix || {}
 
-  // Derive loaded months in calendar order from month_sales keys
+  // Derive loaded months in calendar order, intersected with active filter
   const monthSales = kpis.month_sales || {}
   const monthUnits = kpis.month_units || {}
-  const months = MONTH_KEYS.filter(k => k in monthSales)
+  const months = MONTH_KEYS.filter(k => k in monthSales && filteredMonths.includes(k))
   const periodLabel = months.length > 0
     ? `${MONTH_CONFIG[months[0]].short} – ${MONTH_CONFIG[months[months.length - 1]].short} 2026`
     : '2026'
@@ -49,14 +52,6 @@ export default function ProductsTab() {
     }),
   }
 
-  // ── Annual target vs YTD achieved ────────────────────────────
-  const avqData = {
-    labels: avq.map(r => r.product),
-    datasets: [
-      { label: 'Annual Target', data: avq.map(r => r.annual_target), backgroundColor: 'rgba(148,163,184,0.2)', borderColor: '#94a3b8', borderWidth: 1 },
-      { label: 'YTD Achieved',  data: avq.map(r => r.q1_achieved),   backgroundColor: COLORS.q1A, borderColor: COLORS.q1, borderWidth: 1 },
-    ],
-  }
 
   // ── Doughnut: category mix per loaded month ───────────────────
   const doughnutLabels = months.flatMap(mk => [
@@ -132,10 +127,47 @@ export default function ProductsTab() {
       </div>
 
       <SectionLabel tag="PRODUCTS" text="ANNUAL TARGET VS YTD ACHIEVEMENT" monthColor="prod-s" />
+      <div className="full">
+        <div className="card avq-card">
+          <div className="card-title">Annual Target vs YTD Achieved (€)</div>
+          <div className="card-sub">Each bar shows YTD sales as a % of the full-year target</div>
+          <div className="avq-list">
+            {avq.map(row => {
+              const pct = row.annual_target > 0
+                ? (row.q1_achieved / row.annual_target) * 100
+                : 0
+              const status = pct >= 75 ? 'good' : pct >= 45 ? 'warn' : 'danger'
+              const statusLabel = pct >= 75 ? 'On Track' : pct >= 45 ? 'In Progress' : 'Behind'
+              return (
+                <div key={row.product} className="avq-row">
+                  <div className="avq-left">
+                    <div className="avq-product">{row.product}</div>
+                    <div className={`avq-status avq-status-${status}`}>{statusLabel}</div>
+                  </div>
+                  <div className="avq-center">
+                    <div className="avq-track">
+                      <div
+                        className={`avq-fill avq-fill-${status}`}
+                        style={{ width: `${Math.min(pct, 100)}%` }}
+                      />
+                      <div className="avq-track-label">
+                        <span className="avq-achieved-lbl">€{Math.round(row.q1_achieved).toLocaleString()} achieved</span>
+                        <span className="avq-target-lbl">€{Math.round(row.annual_target).toLocaleString()} target</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className={`avq-pct avq-pct-${status}`}>
+                    {pct.toFixed(1)}%
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      <SectionLabel tag="PRODUCTS" text="CATEGORY MIX" monthColor="prod-s" />
       <div className="grid-2">
-        <ChartCard title="Annual Target vs YTD Achieved (€)" sub="Sorted by YTD achievement" height="h300">
-          <Bar data={avqData} options={baseOptions({ indexAxis: 'y' })} />
-        </ChartCard>
         <ChartCard
           title={`Category Mix — Tablet vs Injectable (${periodLabel})`}
           sub="By month × category"

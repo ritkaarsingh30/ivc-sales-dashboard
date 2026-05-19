@@ -7,6 +7,7 @@ import DataTable from '../components/DataTable'
 import Badge from '../components/Badge'
 import { baseOptions, COLORS, monthColor } from '../utils/chartConfig'
 import { MONTH_CONFIG, MONTH_KEYS } from '../utils/monthConfig'
+import { useFilter } from '../context/FilterContext'
 
 /* ── helpers ─────────────────────────────────────────────── */
 const fmtEur = n => (n != null && n !== 0) ? `€${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'
@@ -125,6 +126,8 @@ function DelegateScorecard({ d, color }) {
 /* ── Main tab ────────────────────────────────────────────── */
 export default function DelegatesTab() {
   const { data, isLoading, isError } = useDelegates()
+  const { activeMonths: filteredMonths } = useFilter()
+
   if (isLoading) return <div className="loading">⟳ Loading delegates data...</div>
   if (isError)   return <div className="error">✕ Failed to load delegates data. Is the backend running?</div>
 
@@ -132,8 +135,8 @@ export default function DelegatesTab() {
   const summ = data.q1_summary   || {}
   const ctcR = data.ctc_ratios   || []
 
-  // Derive loaded months in calendar order from the first delegate's months object
-  const months = MONTH_KEYS.filter(k => dls[0]?.months && k in dls[0].months)
+  // Derive loaded months in calendar order, intersected with active filter
+  const months = MONTH_KEYS.filter(k => dls[0]?.months && k in dls[0].months && filteredMonths.includes(k))
   const periodLabel = months.length > 0
     ? `${MONTH_CONFIG[months[0]].short} – ${MONTH_CONFIG[months[months.length - 1]].short} 2026`
     : '2026'

@@ -6,6 +6,7 @@ import InsightBox from '../components/InsightBox'
 import ChartCard from '../components/ChartCard'
 import KpiCard from '../components/KpiCard'
 import { baseOptions, baseOptionsNoScale, COLORS, PALETTE, monthColor } from '../utils/chartConfig'
+import { useFilter } from '../context/FilterContext'
 
 function fmt(n, decimals = 0) {
   if (n === null || n === undefined) return '—'
@@ -18,13 +19,15 @@ export default function OverviewTab() {
   const { data: insightsData, isLoading: insightsLoading } = useInsights()
   const refreshMut = useRefreshInsights()
   const refreshData = useRefreshData()
+  const { activeMonths: filteredMonths } = useFilter()
 
   if (isLoading) return <div className="loading">⟳ Loading overview data...</div>
   if (isError) return <div className="error">✕ Failed to load overview. Is the backend running?</div>
 
   const q1 = ov.q1_summary || {}
-  const mc = ov.month_comparison || []
-  const months = ov.months_loaded || mc.map(m => m.key)
+  const mcAll = ov.month_comparison || []
+  const mc = mcAll.filter(m => filteredMonths.includes(m.key))
+  const months = mc.map(m => m.key)
   const trend = ov.all_products_trend || []
   const delegateVisits = q1.delegate_visits_all || q1.delegate_visits_q1 || []
 
