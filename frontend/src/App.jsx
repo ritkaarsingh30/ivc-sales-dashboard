@@ -7,10 +7,11 @@ import ProductsTab from './tabs/ProductsTab'
 import DelegatesTab from './tabs/DelegatesTab'
 import ExpensesTab from './tabs/ExpensesTab'
 import ActivitiesTab from './tabs/ActivitiesTab'
+import NomenclatureTab from './tabs/NomenclatureTab'
 import { useAvailableMonths } from './hooks/useDashboard'
 import { FilterProvider } from './context/FilterContext'
 
-const AGGREGATE_TABS = new Set(['ov', 'prod', 'del', 'exp', 'act'])
+const AGGREGATE_TABS = new Set(['ov', 'prod', 'del', 'exp', 'act', 'nom'])
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('ov')
@@ -22,12 +23,13 @@ export default function App() {
     del:  <DelegatesTab />,
     exp:  <ExpensesTab />,
     act:  <ActivitiesTab />,
+    nom:  <NomenclatureTab />,
   }
 
   const allPanelKeys = [
     'ov',
     ...availableMonths,
-    'prod', 'del', 'exp', 'act',
+    'prod', 'del', 'exp', 'act', 'nom',
   ]
 
   return (

@@ -149,6 +149,7 @@ h1 {
 .tab.prod.active { color:#f472b6;    border-color:#f472b6;    }
 .tab.del.active  { color:#38bdf8;    border-color:#38bdf8;    }
 .tab.exp.active  { color:var(--warn);border-color:var(--warn); }
+.tab.nom.active  { color:#a78bfa;    border-color:#a78bfa;    }
 
 /* ===== PANELS ===== */
 .panel { display:none; padding:24px 0 48px; }
