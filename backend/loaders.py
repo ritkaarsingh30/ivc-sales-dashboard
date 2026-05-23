@@ -453,8 +453,8 @@ def load_expense(file_bytes: bytes = None, df: pd.DataFrame = None,
     canonical_rates = canonical_rates or {}
     missing_sheets = []
 
-    if df is not None:
-        # Sheets path: all three tabs passed directly
+    if file_bytes is None:
+        # Sheets path: all three tabs passed directly (any may be None if tab was missing)
         raw_mr = df
         # raw_ae and raw_oe come from the caller (sheets_loader._load_expense_from_sheets)
         # Leave them as-is (already set via kwargs)
