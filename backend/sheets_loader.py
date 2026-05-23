@@ -1,5 +1,5 @@
 """
-sheets_loader.py — Fetch all IVC data from Google Sheets.
+sheets_loader.py — Fetch all IVC data from Google Sheets. Link available to owner.
 
 Key design decisions:
   1. Batch fetch: each spreadsheet uses spreadsheets.values.batchGet to pull all
