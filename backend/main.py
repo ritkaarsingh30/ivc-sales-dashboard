@@ -189,7 +189,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:3000",
-        "https://ivc-sales-dashboard-production.up.railway.app",
+        "https://ivc-sales-dashboard.vercel.app",
         *_extra_origins,
     ],
     allow_methods=["*"],
