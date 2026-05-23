@@ -16,6 +16,9 @@ ChartJS.register(
   annotationPlugin
 )
 
+ChartJS.defaults.datasets.bar.barPercentage = 0.85
+ChartJS.defaults.datasets.bar.categoryPercentage = 0.7
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: Infinity, retry: 1 } }
 })

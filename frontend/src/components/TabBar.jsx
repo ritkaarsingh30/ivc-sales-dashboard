@@ -1,10 +1,11 @@
 import { MONTH_CONFIG } from '../utils/monthConfig'
 
 const STATIC_TABS_AFTER = [
-  { id: 'prod', label: '📦 PRODUCTS',   cls: 'prod' },
-  { id: 'del',  label: '👥 DELEGATES',  cls: 'del'  },
-  { id: 'exp',  label: '💰 EXPENSES',   cls: 'exp'  },
-  { id: 'act',  label: '📋 ACTIVITIES', cls: 'act'  },
+  { id: 'prod', label: '📦 PRODUCTS',      cls: 'prod' },
+  { id: 'del',  label: '👥 DELEGATES',     cls: 'del'  },
+  { id: 'exp',  label: '💰 EXPENSES',      cls: 'exp'  },
+  { id: 'act',  label: '📋 ACTIVITIES',    cls: 'act'  },
+  { id: 'nom',  label: '📖 NOMENCLATURE',  cls: 'nom'  },
 ]
 
 export default function TabBar({ activeTab, onTabChange, availableMonths = [] }) {

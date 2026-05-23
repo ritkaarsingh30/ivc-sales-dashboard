@@ -167,7 +167,7 @@ export default function VisitTrackerSection({ visitTracker = {}, cfg }) {
                   height="h250"
                   monthColor={cfg.cls}
                 >
-                  <Bar data={chartData} options={chartOpts} />
+                  <Bar key={sortMode} data={chartData} options={chartOpts} />
                 </ChartCard>
               </div>
 
