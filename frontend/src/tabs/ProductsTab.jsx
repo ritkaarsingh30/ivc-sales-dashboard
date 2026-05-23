@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Bar, Doughnut } from 'react-chartjs-2'
 import { useProducts } from '../hooks/useDashboard'
 import SectionLabel from '../components/SectionLabel'
@@ -20,6 +21,16 @@ function fmtUnits(n) {
 export default function ProductsTab() {
   const { data, isLoading, isError } = useProducts()
   const { activeMonths: filteredMonths } = useFilter()
+  const [avqMonth, setAvqMonth] = useState(null)
+
+  // Derive months early (safe with undefined data) so useEffect can reference it
+  const monthSales = data?.q1_kpis?.month_sales || {}
+  const months = MONTH_KEYS.filter(k => k in monthSales && filteredMonths.includes(k))
+
+  // Reset avqMonth when global filter removes the selected month
+  useEffect(() => {
+    if (avqMonth && !months.includes(avqMonth)) setAvqMonth(null)
+  }, [months.join(',')])
 
   if (isLoading) return <div className="loading">⟳ Loading products data...</div>
   if (isError) return <div className="error">✕ Failed to load products data. Is the backend running?</div>
@@ -29,10 +40,15 @@ export default function ProductsTab() {
   const avq   = data.annual_vs_q1 || []
   const cm    = data.category_mix || {}
 
-  // Derive loaded months in calendar order, intersected with active filter
-  const monthSales = kpis.month_sales || {}
   const monthUnits = kpis.month_units || {}
-  const months = MONTH_KEYS.filter(k => k in monthSales && filteredMonths.includes(k))
+
+  // Per-product trend lookup for the AVQ by-month filter
+  const trendByProduct = Object.fromEntries(trend.map(t => [t.product, t]))
+  function avqAchieved(product) {
+    const t = trendByProduct[product] || {}
+    if (avqMonth) return t[avqMonth] ?? 0
+    return months.reduce((sum, mk) => sum + (t[mk] ?? 0), 0)
+  }
   const periodLabel = months.length > 0
     ? `${MONTH_CONFIG[months[0]].short} – ${MONTH_CONFIG[months[months.length - 1]].short} 2026`
     : '2026'
@@ -129,15 +145,36 @@ export default function ProductsTab() {
       <SectionLabel tag="PRODUCTS" text="ANNUAL TARGET VS YTD ACHIEVEMENT" monthColor="prod-s" />
       <div className="full">
         <div className="card avq-card">
-          <div className="card-title">Annual Target vs YTD Achieved (€)</div>
-          <div className="card-sub">Each bar shows YTD sales as a % of the full-year target</div>
+          <div className="card-title">
+            Annual Target vs {avqMonth ? MONTH_CONFIG[avqMonth].label : 'YTD'} Achieved (€)
+          </div>
+          <div className="card-sub">
+            Each bar shows {avqMonth ? MONTH_CONFIG[avqMonth].label : 'YTD'} sales as a % of the full-year target
+          </div>
+          <div className="avq-filter">
+            <button
+              className={`avq-filter-pill${!avqMonth ? ' active' : ''}`}
+              onClick={() => setAvqMonth(null)}
+            >
+              YTD
+            </button>
+            {months.map(mk => (
+              <button
+                key={mk}
+                className={`avq-filter-pill${avqMonth === mk ? ' active' : ''}`}
+                style={avqMonth === mk ? { color: MONTH_CONFIG[mk].color, borderColor: MONTH_CONFIG[mk].color } : {}}
+                onClick={() => setAvqMonth(avqMonth === mk ? null : mk)}
+              >
+                {MONTH_CONFIG[mk].short}
+              </button>
+            ))}
+          </div>
           <div className="avq-list">
-            {avq.map(row => {
-              const pct = row.annual_target > 0
-                ? (row.q1_achieved / row.annual_target) * 100
-                : 0
-              const status = pct >= 75 ? 'good' : pct >= 45 ? 'warn' : 'danger'
-              const statusLabel = pct >= 75 ? 'On Track' : pct >= 45 ? 'In Progress' : 'Behind'
+          {avq.map(row => {
+              const achieved = avqAchieved(row.product)
+              const pct = row.annual_target > 0 ? (achieved / row.annual_target) * 100 : 0
+              const status = pct >= 80 ? 'good' : pct >= 45 ? 'warn' : 'danger'
+              const statusLabel = pct >= 80 ? 'ON TRACK' : pct >= 45 ? 'IN PROGRESS' : 'BEHIND'
               return (
                 <div key={row.product} className="avq-row">
                   <div className="avq-left">
@@ -145,15 +182,17 @@ export default function ProductsTab() {
                     <div className={`avq-status avq-status-${status}`}>{statusLabel}</div>
                   </div>
                   <div className="avq-center">
-                    <div className="avq-track">
-                      <div
-                        className={`avq-fill avq-fill-${status}`}
-                        style={{ width: `${Math.min(pct, 100)}%` }}
-                      />
-                      <div className="avq-track-label">
-                        <span className="avq-achieved-lbl">€{Math.round(row.q1_achieved).toLocaleString()} achieved</span>
-                        <span className="avq-target-lbl">€{Math.round(row.annual_target).toLocaleString()} target</span>
+                    <div className="avq-bar-row">
+                      <div className="avq-track">
+                        <div
+                          className={`avq-fill avq-fill-${status}`}
+                          style={{ width: `${Math.min(pct, 100)}%` }}
+                        />
+                        <div className="avq-track-label">
+                          <span className="avq-achieved-lbl">€{Math.round(achieved).toLocaleString()} achieved</span>
+                        </div>
                       </div>
+                      <span className="avq-target-lbl">€{Math.round(row.annual_target).toLocaleString()} target</span>
                     </div>
                   </div>
                   <div className={`avq-pct avq-pct-${status}`}>

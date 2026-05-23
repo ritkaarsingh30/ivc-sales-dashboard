@@ -71,16 +71,7 @@ export default function MonthTab({ month }) {
     ],
   }
 
-  const psData = {
-    labels: ps.map(r => r.product),
-    datasets: [{
-      label: 'Sales (€)',
-      data: ps.map(r => r.sales_eur),
-      backgroundColor: mc.alpha,
-      borderColor: mc.solid,
-      borderWidth: 1,
-    }],
-  }
+  const tvaByProduct = Object.fromEntries(tva.map(r => [r.product, r]))
 
   const hasCtc = dt.some(r => r.ctc_ratio !== null && r.ctc_ratio !== undefined)
   const ctcData = hasCtc ? {
@@ -189,14 +180,106 @@ export default function MonthTab({ month }) {
       </div>
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="SALES & CALL BREAKDOWN" monthColor={CFG.sectionCls} />
-      <div className="grid-2">
-        <ChartCard title={`Product Sales Value (€) — ${CFG.label}`} sub="Top products by revenue" height="h300" monthColor={CFG.cls}>
-          <Bar data={psData} options={baseOptions({ indexAxis: 'y', plugins: { legend: { display: false } } })} />
-        </ChartCard>
+      <div className="full">
+        <div className="card avq-card" style={{ borderTop: `2px solid ${mc.solid}` }}>
+          <div className="card-title">Product Sales Value (€) — {CFG.label}</div>
+          <div className="card-sub">Sales vs Projection by product</div>
+          <div className="avq-list" style={{ marginTop: 16 }}>
+            {ps.map(row => {
+              const projection = tvaByProduct[row.product]?.target_eur ?? 0
+              const achieved   = row.sales_eur ?? 0
+              const maxVal     = Math.max(projection, achieved, 1)
+              const achPct     = Math.min((achieved / maxVal) * 100, 100)
+              const projPct    = Math.min((projection / maxVal) * 100, 100)
+              const over       = achieved >= projection
+              const status     = over ? 'good' : achieved >= projection * 0.6 ? 'warn' : 'danger'
+              const statusLabel = over ? 'ON TRACK' : achieved >= projection * 0.6 ? 'IN PROGRESS' : 'BEHIND'
+              return (
+                <div key={row.product} className="avq-row">
+                  <div className="avq-left">
+                    <div className="avq-product">{row.product}</div>
+                    <div className={`avq-status avq-status-${status}`}>{statusLabel}</div>
+                  </div>
+                  <div className="avq-center">
+                    <div className="avq-bar-row">
+                      <div className="avq-track" style={{ position: 'relative' }}>
+                        {/* projection ghost bar */}
+                        <div style={{
+                          position: 'absolute', top: 0, left: 0, bottom: 0,
+                          width: `${projPct}%`,
+                          background: `${mc.solid}22`,
+                          borderRight: `2px dashed ${mc.solid}55`,
+                          borderRadius: 8,
+                        }} />
+                        {/* actual sales fill */}
+                        <div
+                          className={`avq-fill avq-fill-${status}`}
+                          style={{ width: `${achPct}%` }}
+                        />
+                        <div className="avq-track-label">
+                          <span className="avq-achieved-lbl">€{Math.round(achieved).toLocaleString()} achieved</span>
+                        </div>
+                      </div>
+                      <span className="avq-target-lbl">€{Math.round(projection).toLocaleString()} target</span>
+                    </div>
+                  </div>
+                  <div className={`avq-pct avq-pct-${status}`}>
+                    {projection > 0 ? ((achieved / projection) * 100).toFixed(1) : '—'}%
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="full">
         <ChartCard title={`Delegate Call Breakdown — ${CFG.label}`} sub="Prescriber · Non-Prescriber · Pharmacy" height="h300" monthColor={CFG.cls}>
           <Bar data={buildCallChartData(cb)} options={buildCallChartOptions()} />
         </ChartCard>
       </div>
+
+      {tva.some(r => (r.target_eur ?? 0) > 0 || (r.achieved_eur ?? 0) > 0) && (
+        <>
+          <SectionLabel tag={CFG.label.toUpperCase()} text="ANNUAL TARGET VS MONTH ACHIEVEMENT" monthColor={CFG.sectionCls} />
+          <div className="full">
+            <div className="card avq-card">
+              <div className="card-title">Monthly Target vs {CFG.label} Achieved (€)</div>
+              <div className="card-sub">Each bar shows {CFG.label} sales as a % of the monthly projection target</div>
+              <div className="avq-list">
+                {tva.filter(r => (r.target_eur ?? 0) > 0 || (r.achieved_eur ?? 0) > 0).map(row => {
+                  const pct = (row.target_eur ?? 0) > 0 ? ((row.achieved_eur ?? 0) / row.target_eur) * 100 : 0
+                  const status = pct >= 80 ? 'good' : pct >= 45 ? 'warn' : 'danger'
+                  const statusLabel = pct >= 80 ? 'ON TRACK' : pct >= 45 ? 'IN PROGRESS' : 'BEHIND'
+                  return (
+                    <div key={row.product} className="avq-row">
+                      <div className="avq-left">
+                        <div className="avq-product">{row.product}</div>
+                        <div className={`avq-status avq-status-${status}`}>{statusLabel}</div>
+                      </div>
+                      <div className="avq-center">
+                        <div className="avq-bar-row">
+                          <div className="avq-track">
+                            <div
+                              className={`avq-fill avq-fill-${status}`}
+                              style={{ width: `${Math.min(pct, 100)}%` }}
+                            />
+                            <div className="avq-track-label">
+                              <span className="avq-achieved-lbl">€{Math.round(row.achieved_eur ?? 0).toLocaleString()} achieved</span>
+                            </div>
+                          </div>
+                          <span className="avq-target-lbl">€{Math.round(row.target_eur ?? 0).toLocaleString()} target</span>
+                        </div>
+                      </div>
+                      <div className={`avq-pct avq-pct-${status}`}>{pct.toFixed(1)}%</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       <SectionLabel tag={CFG.label.toUpperCase()} text="DELEGATE PERFORMANCE TABLE" monthColor={CFG.sectionCls} />
       <DataTable

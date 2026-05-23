@@ -103,24 +103,37 @@ async def get_month(month: str):
         for _, prow in proj_df.iterrows():
             prod = prow["Product"]
             target = prow.get("Target_Units", 0)
+            target_eur = prow.get("Target_Value_EUR", 0)
             matched = current_sales[current_sales["Product"] == prod]
             achieved = float(matched["TOTAL_SALES"].sum()) if not matched.empty else 0
+            achieved_eur = float(matched["TOTAL_VALUE_EUR"].sum()) if not matched.empty else 0
             target_vs_achieved.append({
                 "product": prod,
                 "target": round(float(target), 2),
+                "target_eur": round(float(target_eur), 2),
                 "achieved": round(achieved, 2),
+                "achieved_eur": round(achieved_eur, 2),
             })
 
-    # ── Product Sales (top 10) ──
+    # ── Product Sales (sorted by sales, all products) ──
     product_sales = []
     if current_sales is not None and not current_sales.empty:
         ps = current_sales[["Product", "TOTAL_VALUE_EUR"]].copy()
         ps = ps.groupby("Product")["TOTAL_VALUE_EUR"].sum().reset_index()
-        ps = ps.sort_values("TOTAL_VALUE_EUR", ascending=False).head(10)
+        ps = ps.sort_values("TOTAL_VALUE_EUR", ascending=False)
+
+        # Build a lookup from projection: product name → target EUR
+        proj_lookup = {}
+        if proj_df is not None and not proj_df.empty:
+            for _, prow in proj_df.iterrows():
+                proj_lookup[prow["Product"]] = round(float(prow.get("Target_Value_EUR", 0) or 0), 2)
+
         for _, row in ps.iterrows():
+            prod = row["Product"]
             product_sales.append({
-                "product": row["Product"],
-                "sales_eur": round(float(row["TOTAL_VALUE_EUR"]), 2),
+                "product":    prod,
+                "sales_eur":  round(float(row["TOTAL_VALUE_EUR"]), 2),
+                "target_eur": proj_lookup.get(prod, 0.0),
             })
 
     def _safe_int(v):

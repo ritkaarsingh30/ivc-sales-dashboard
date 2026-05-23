@@ -1,4 +1,4 @@
-import { Bar, Line, Doughnut } from 'react-chartjs-2'
+import { Bar, Doughnut } from 'react-chartjs-2'
 import { useOverview, useInsights, useRefreshInsights, useRefreshData } from '../hooks/useDashboard'
 import { MONTH_CONFIG } from '../utils/monthConfig'
 import SectionLabel from '../components/SectionLabel'
@@ -60,43 +60,6 @@ export default function OverviewTab() {
         fill: false,
         tension: 0.4,
         order: 1,
-      },
-    ],
-  }
-
-  // ── Cumulative build-up line ──
-  const cumulativeSales = mc.reduce((acc, m, i) => {
-    acc.push((acc[i - 1] || 0) + (m.sales || 0))
-    return acc
-  }, [])
-  const cumulativeProj = mc.reduce((acc, m, i) => {
-    acc.push((acc[i - 1] || 0) + (m.projection || 0))
-    return acc
-  }, [])
-
-  const cumulativeData = {
-    labels: monthLabels,
-    datasets: [
-      {
-        label: 'Cumulative Actual (€)',
-        data: cumulativeSales,
-        borderColor: COLORS.q1,
-        backgroundColor: COLORS.q1S,
-        borderWidth: 2,
-        pointRadius: 5,
-        fill: true,
-        tension: 0.4,
-      },
-      {
-        label: 'Cumulative Projection (€)',
-        data: cumulativeProj,
-        borderColor: COLORS.neutral,
-        backgroundColor: 'transparent',
-        borderWidth: 2,
-        borderDash: [6, 3],
-        pointRadius: 4,
-        fill: false,
-        tension: 0.4,
       },
     ],
   }
@@ -192,7 +155,7 @@ export default function OverviewTab() {
 
       {/* ── SALES TREND & PROJECTION ── */}
       <SectionLabel tag={periodLabel} text="SALES TREND & PROJECTION GAP" monthColor="ov-s" />
-      <div className="grid-2">
+      <div className="full">
         <ChartCard
           title="Monthly Sales: Actual vs Projection (€)"
           sub={`${monthLabels.join(' · ')} | Projection shown as dashed`}
@@ -200,16 +163,6 @@ export default function OverviewTab() {
           monthColor="tri"
         >
           <Bar data={salesVsProjData} options={baseOptions({
-            plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }
-          })} />
-        </ChartCard>
-        <ChartCard
-          title={`Cumulative ${periodLabel} Sales Build-up (€)`}
-          sub="Month-over-month cumulative and projection pace"
-          height="h300"
-          monthColor="tri"
-        >
-          <Line data={cumulativeData} options={baseOptions({
             plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } } }
           })} />
         </ChartCard>
