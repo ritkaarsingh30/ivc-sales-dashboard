@@ -369,6 +369,8 @@ def normalize_territory(raw: str) -> str:
     )
     if score >= 75:
         return TERRITORY_OVERRIDES[match]
+    import logging
+    logging.getLogger(__name__).warning("[territory] no match for %r (best=%r score=%d)", raw, match, score)
     return "UNKNOWN"
 
 def territory_display_name(zone_id: str) -> str:
