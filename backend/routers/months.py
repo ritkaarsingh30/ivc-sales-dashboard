@@ -7,6 +7,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from constants import FCFA_TO_EUR, DISTRIBUTORS
 from name_map import product_display_name, mr_display_name, MR_CANONICAL
+from routers.delegates import TERRITORY_LABELS
 from cache.redis_client import get_api_cache, set_api_cache
 
 router = APIRouter()
@@ -160,7 +161,7 @@ async def get_month(month: str):
             mr_id = row.get("Delegate", "")
             delegate_table.append({
                 "name": mr_display_name(mr_id) if mr_id else "",
-                "territory": row.get("Territory", ""),
+                "territory": TERRITORY_LABELS.get(row.get("Territory", ""), row.get("Territory", "") or "—"),
                 "total_calls": _safe_int(row.get("TotalCalls", 0)),
                 "prescriber": _safe_int(row.get("Prescriber", 0)),
                 "non_prescriber": _safe_int(row.get("NonPrescriber", 0)),
