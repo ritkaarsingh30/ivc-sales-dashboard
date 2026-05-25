@@ -42,5 +42,9 @@
   "BONI CHARLIE": {
     "id": "MR_017",
     "display_name": "BONI CHARLIE"
+  },
+  "VACANT": {
+    "id": "MR_018",
+    "display_name": "vacant"
   }
 }
