@@ -1,3 +1,4 @@
+import { useState, useCallback, useRef } from 'react'
 import { Bar, Doughnut } from 'react-chartjs-2'
 import { useOverview, useInsights, useRefreshInsights, useRefreshData } from '../hooks/useDashboard'
 import { MONTH_CONFIG } from '../utils/monthConfig'
@@ -7,6 +8,8 @@ import ChartCard from '../components/ChartCard'
 import KpiCard from '../components/KpiCard'
 import { baseOptions, baseOptionsNoScale, COLORS, PALETTE, monthColor } from '../utils/chartConfig'
 import { useFilter } from '../context/FilterContext'
+
+const REFRESH_COOLDOWN_MS = 8000
 
 function fmt(n, decimals = 0) {
   if (n === null || n === undefined) return '—'
@@ -20,6 +23,60 @@ export default function OverviewTab() {
   const refreshMut = useRefreshInsights()
   const refreshData = useRefreshData()
   const { activeMonths: filteredMonths } = useFilter()
+
+  const [refreshCooldown, setRefreshCooldown] = useState(false)
+  const [insightsCooldown, setInsightsCooldown] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState(null)
+  const [insightsMsg, setInsightsMsg] = useState(null)
+  const refreshMsgTimer = useRef(null)
+  const insightsMsgTimer = useRef(null)
+
+  const showMsg = (setter, timerRef, msg, durationMs = 4000) => {
+    setter(msg)
+    clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => setter(null), durationMs)
+  }
+
+  const handleRefreshData = useCallback(() => {
+    if (refreshData.isPending || refreshCooldown) return
+    refreshData.mutate(undefined, {
+      onSuccess: (data) => {
+        setRefreshCooldown(true)
+        setTimeout(() => setRefreshCooldown(false), REFRESH_COOLDOWN_MS)
+        if (data?.status === 'skipped') {
+          showMsg(setRefreshMsg, refreshMsgTimer, 'Refresh skipped (local mode)')
+        }
+      },
+      onError: (err) => {
+        const status = err?.response?.status
+        const reason = err?.response?.data?.reason
+        if (status === 409) {
+          showMsg(setRefreshMsg, refreshMsgTimer, 'Already refreshing — please wait')
+        } else {
+          showMsg(setRefreshMsg, refreshMsgTimer, reason || 'Refresh failed')
+        }
+      },
+    })
+  }, [refreshData, refreshCooldown])
+
+  const handleRefreshInsights = useCallback(() => {
+    if (refreshMut.isPending || insightsCooldown) return
+    refreshMut.mutate(undefined, {
+      onSuccess: () => {
+        setInsightsCooldown(true)
+        setTimeout(() => setInsightsCooldown(false), REFRESH_COOLDOWN_MS)
+      },
+      onError: (err) => {
+        const status = err?.response?.status
+        const reason = err?.response?.data?.reason
+        if (status === 409) {
+          showMsg(setInsightsMsg, insightsMsgTimer, 'Already generating — please wait')
+        } else {
+          showMsg(setInsightsMsg, insightsMsgTimer, reason || 'Generation failed')
+        }
+      },
+    })
+  }, [refreshMut, insightsCooldown])
 
   if (isLoading) return <div className="loading">⟳ Loading overview data...</div>
   if (isError) return <div className="error">✕ Failed to load overview. Is the backend running?</div>
@@ -295,22 +352,28 @@ export default function OverviewTab() {
               {insightsData.cached ? 'Cached' : 'Live'}
             </span>
           )}
+          {refreshMsg && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--danger)', whiteSpace: 'nowrap' }}>{refreshMsg}</span>
+          )}
+          {insightsMsg && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--danger)', whiteSpace: 'nowrap' }}>{insightsMsg}</span>
+          )}
           <button
             className="refresh-btn"
             style={{ borderColor: 'rgba(16,185,129,.4)', background: 'rgba(16,185,129,.1)', color: 'var(--mar)' }}
-            onClick={() => refreshData.mutate()}
-            disabled={refreshData.isPending}
+            onClick={handleRefreshData}
+            disabled={refreshData.isPending || refreshCooldown}
             id="refresh-data-btn"
           >
-            {refreshData.isPending ? '⟳ Refreshing...' : '⟳ Refresh Data'}
+            {refreshData.isPending ? '⟳ Refreshing...' : refreshCooldown ? '✓ Done' : '⟳ Refresh Data'}
           </button>
           <button
             className="refresh-btn"
-            onClick={() => refreshMut.mutate()}
-            disabled={refreshMut.isPending}
+            onClick={handleRefreshInsights}
+            disabled={refreshMut.isPending || insightsCooldown}
             id="regenerate-insights-btn"
           >
-            {refreshMut.isPending ? '⟳ Generating...' : '↺ Regenerate'}
+            {refreshMut.isPending ? '⟳ Generating...' : insightsCooldown ? '✓ Done' : '↺ Regenerate'}
           </button>
         </div>
       </div>

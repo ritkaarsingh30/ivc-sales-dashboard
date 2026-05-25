@@ -17,6 +17,10 @@ TERRITORY_LABELS = {
     "ZONE_ADJAME":    "Adjamé",
     "ZONE_COCODY":    "Cocody",
     "ZONE_MARCORI":   "Marcori",
+    "ZONE_KOUMASSI":  "Koumassi / Port Bouet",
+    "ZONE_ABOBO":     "Abobo",
+    "ZONE_ANYAMA":    "Anyama",
+    "ZONE_CM":        "Country Mgr",
     "UNKNOWN":        "—",
 }
 

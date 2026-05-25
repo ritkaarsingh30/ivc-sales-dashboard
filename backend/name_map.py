@@ -24,6 +24,7 @@ MR_CANONICAL = {
     "MR_005": "TOUALY CLEVAR",
     "MR_006": "JITENDRA MISHRA",   # Country Manager (CM)
     "AGT_001": "ARRA BEHOU",       # Promo Agent (not MR)
+    "MR_019": "KOUAME KOUASSI",
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -86,6 +87,10 @@ MR_OVERRIDES = {
     "1": "MR_006",   # data entry error in report file
     # ARRA BEHOU
     "ARRA BEHOU": "AGT_001",
+    # KANGA KOUASSI — anchored to prevent fuzzy collision with KOUAME KOUASSI
+    "KANGA KOUASSI": "MR_016",
+    # KOUAME KOUASSI — distinct delegate, must not fuzzy-match to KANGA KOUASSI
+    "KOUAME KOUASSI": "MR_019",
 }
 
 # Joint entries — map to list of IDs
@@ -343,6 +348,10 @@ TERRITORY_CANONICAL = {
     "ZONE_COCODY":    "COCODY",
     "ZONE_ADJAME":    "ADJAME",
     "ZONE_MARCORI":   "MARCORI + KOUMASSI",
+    "ZONE_KOUMASSI":  "Koumassi / Port Bouet",
+    "ZONE_ABOBO":     "ABOBO",
+    "ZONE_ANYAMA":    "ANYAMA",
+    "ZONE_CM":        "Country Mgr",
 }
 
 TERRITORY_OVERRIDES = {
@@ -351,11 +360,18 @@ TERRITORY_OVERRIDES = {
     "YOPOUGON EAST": "ZONE_YOP_EAST", "YOUPOUGON EAST": "ZONE_YOP_EAST",
     "YOPOUGON EST": "ZONE_YOP_EAST",
     "COCODY": "ZONE_COCODY", "COCODI": "ZONE_COCODY",
+    "COCODY BINGERVILLE": "ZONE_COCODY", "COCODY/BINGERVILLE": "ZONE_COCODY",
+    "BINGERVILLE": "ZONE_COCODY",
     "ADJAME": "ZONE_ADJAME", "ADJAME +ATTACOUBE": "ZONE_ADJAME",
-    "ADJAME/ATTACOUBE": "ZONE_ADJAME",
+    "ADJAME/ATTACOUBE": "ZONE_ADJAME", "ADJAME + ATTACOUBE": "ZONE_ADJAME",
     "MARCORI+KOUMASSI": "ZONE_MARCORI",
     "KOUMASSI+MARCORI+PORT BOUET": "ZONE_MARCORI",
     "MARCORI + KOUMASSI": "ZONE_MARCORI",
+    "KOUMASSI+PORT BOUET+TRECHVILLE": "ZONE_KOUMASSI",
+    "KOUMASSI + PORT BOUET + TRECHVILLE": "ZONE_KOUMASSI",
+    "ABOBO": "ZONE_ABOBO",
+    "ANYAMA": "ZONE_ANYAMA",
+    "COUNTRY MANAGER": "ZONE_CM",
 }
 
 def normalize_territory(raw: str) -> str:
@@ -371,7 +387,8 @@ def normalize_territory(raw: str) -> str:
         return TERRITORY_OVERRIDES[match]
     import logging
     logging.getLogger(__name__).warning("[territory] no match for %r (best=%r score=%d)", raw, match, score)
-    return "UNKNOWN"
+    # Return the raw value (title-cased) so it's visible in the UI rather than hidden as "UNKNOWN"
+    return str(raw).strip().title()
 
 def territory_display_name(zone_id: str) -> str:
     return TERRITORY_CANONICAL.get(zone_id, zone_id)

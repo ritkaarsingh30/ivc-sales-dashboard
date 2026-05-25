@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import asyncio
 import sys
 import os
 import json
@@ -27,6 +28,7 @@ from storage import get_storage
 from name_map import build_doctor_index
 
 app_state = {}
+_refresh_lock = asyncio.Lock()
 
 
 def _build_doctor_index_from_data(data: dict):
@@ -222,83 +224,90 @@ def available_months():
 @app.post("/api/data/refresh")
 async def refresh_data():
     """Re-check Google Drive for changes and refresh only what changed."""
-    backend = os.getenv("STORAGE_BACKEND", "local")
-    if backend != "sheets":
-        return {"status": "skipped", "reason": "Not using Google Sheets backend"}
+    if _refresh_lock.locked():
+        return JSONResponse(
+            status_code=409,
+            content={"status": "busy", "reason": "A refresh is already in progress. Please wait."},
+        )
 
-    storage = app_state.get("storage")
-    if storage is None:
-        return {"status": "error", "reason": "Storage not initialised"}
+    async with _refresh_lock:
+        backend = os.getenv("STORAGE_BACKEND", "local")
+        if backend != "sheets":
+            return {"status": "skipped", "reason": "Not using Google Sheets backend"}
 
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
-    if folder_id:
-        storage.discover(folder_id)
+        storage = app_state.get("storage")
+        if storage is None:
+            return {"status": "error", "reason": "Storage not initialised"}
 
-    from sheets_loader import refresh_changed_from_sheets
-    from cache.redis_client import invalidate_api_keys, build_sheet_dependencies, flush_all_api_cache
+        folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+        if folder_id:
+            storage.discover(folder_id)
 
-    existing_data = app_state.get("data", {})
+        from sheets_loader import refresh_changed_from_sheets
+        from cache.redis_client import invalidate_api_keys, build_sheet_dependencies, flush_all_api_cache
 
-    # If server started from Redis cache, app_state["data"] is an empty shell.
-    # Eager-recomputing endpoints against shell data would overwrite good Redis caches
-    # with half-empty results. Force a full fresh load from Drive instead.
-    if _has_shell_data(existing_data):
-        from sheets_loader import load_all_from_sheets
-        from cache.redis_client import redis_client as _rc
+        existing_data = app_state.get("data", {})
 
-        print("[refresh] Detected empty shell — performing full reload from Drive")
+        # If server started from Redis cache, app_state["data"] is an empty shell.
+        # Eager-recomputing endpoints against shell data would overwrite good Redis caches
+        # with half-empty results. Force a full fresh load from Drive instead.
+        if _has_shell_data(existing_data):
+            from sheets_loader import load_all_from_sheets
+            from cache.redis_client import redis_client as _rc
 
-        # Clear drive_modified metadata so load_all_from_sheets re-fetches everything
-        drive_keys = await _rc.keys("sheets:*:drive_modified")
-        if drive_keys:
-            await _rc.delete(*drive_keys)
+            print("[refresh] Detected empty shell — performing full reload from Drive")
 
-        await flush_all_api_cache()
+            # Clear drive_modified metadata so load_all_from_sheets re-fetches everything
+            drive_keys = await _rc.keys("sheets:*:drive_modified")
+            if drive_keys:
+                await _rc.delete(*drive_keys)
 
-        existing_data = await load_all_from_sheets(storage, existing_data={})
-        app_state["data"] = existing_data
-        app_state["insights_cache"] = None
-        _build_doctor_index_from_data(existing_data)
+            await flush_all_api_cache()
 
+            existing_data = await load_all_from_sheets(storage, existing_data={})
+            app_state["data"] = existing_data
+            app_state["insights_cache"] = None
+            _build_doctor_index_from_data(existing_data)
+
+            import sheets_loader as _sl
+            month_keys = [m["key"] for m in _sl.MONTHS]
+            sheet_deps = build_sheet_dependencies(month_keys)
+            app_state["sheet_dependencies"] = sheet_deps
+
+            all_endpoints = (
+                ["overview", "products", "delegates", "expenses", "activities", "insights"]
+                + [f"months:{k}" for k in month_keys]
+            )
+            await eager_recompute(all_endpoints)
+
+            return {"status": "ok", "months_loaded": month_keys, "changed_sheets": ["full_reload"]}
+
+        updated_data, changed_keys = await refresh_changed_from_sheets(storage, existing_data)
+        app_state["data"] = updated_data
+        _build_doctor_index_from_data(updated_data)
+
+        # Rebuild dependency map with potentially new months
         import sheets_loader as _sl
         month_keys = [m["key"] for m in _sl.MONTHS]
         sheet_deps = build_sheet_dependencies(month_keys)
         app_state["sheet_dependencies"] = sheet_deps
 
-        all_endpoints = (
-            ["overview", "products", "delegates", "expenses", "activities", "insights"]
-            + [f"months:{k}" for k in month_keys]
-        )
-        await eager_recompute(all_endpoints)
+        if changed_keys:
+            endpoints_to_invalidate = set()
+            for ck in changed_keys:
+                endpoints_to_invalidate.update(sheet_deps.get(ck, []))
+            endpoints_to_invalidate.add("insights")
+            app_state["insights_cache"] = None
 
-        return {"status": "ok", "months_loaded": month_keys, "changed_sheets": ["full_reload"]}
+            endpoints_list = list(endpoints_to_invalidate)
+            await invalidate_api_keys(endpoints_list)
+            await eager_recompute(endpoints_list)
 
-    updated_data, changed_keys = await refresh_changed_from_sheets(storage, existing_data)
-    app_state["data"] = updated_data
-    _build_doctor_index_from_data(updated_data)
-
-    # Rebuild dependency map with potentially new months
-    import sheets_loader as _sl
-    month_keys = [m["key"] for m in _sl.MONTHS]
-    sheet_deps = build_sheet_dependencies(month_keys)
-    app_state["sheet_dependencies"] = sheet_deps
-
-    if changed_keys:
-        endpoints_to_invalidate = set()
-        for ck in changed_keys:
-            endpoints_to_invalidate.update(sheet_deps.get(ck, []))
-        endpoints_to_invalidate.add("insights")
-        app_state["insights_cache"] = None
-
-        endpoints_list = list(endpoints_to_invalidate)
-        await invalidate_api_keys(endpoints_list)
-        await eager_recompute(endpoints_list)
-
-    return {
-        "status": "ok",
-        "months_loaded": month_keys,
-        "changed_sheets": changed_keys,
-    }
+        return {
+            "status": "ok",
+            "months_loaded": month_keys,
+            "changed_sheets": changed_keys,
+        }
 
 
 @app.get("/api/cache/redisStatus")

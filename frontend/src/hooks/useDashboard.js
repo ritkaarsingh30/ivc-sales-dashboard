@@ -40,7 +40,8 @@ export const useRefreshInsights = () => {
     mutationFn: () => api.post('/insights/refresh').then(r => r.data),
     onSuccess: (data) => {
       qc.setQueryData(['insights'], data)
-    }
+    },
+    retry: false,
   })
 }
 
@@ -50,7 +51,8 @@ export const useRefreshData = () => {
     mutationFn: () => api.post('/data/refresh').then(r => r.data),
     onSuccess: () => {
       qc.invalidateQueries()
-    }
+    },
+    retry: false,
   })
 }
 
