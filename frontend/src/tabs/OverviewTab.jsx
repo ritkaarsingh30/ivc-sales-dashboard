@@ -345,7 +345,7 @@ export default function OverviewTab() {
       {/* ── AI INSIGHTS ── */}
       <SectionLabel tag={periodLabel} text="KEY INSIGHTS" monthColor="ov-s" />
       <div className="insights-header">
-        <span className="ai-label">🤖 AI-Powered Insights · Groq llama-3.1-8b-instant</span>
+        <span className="ai-label">Key Action Points</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {insightsData && (
             <span className={`badge ${insightsData.cached ? 'n' : 'g'}`}>
