@@ -39,6 +39,9 @@ export default function DataTable({ title, badge, borderColor, columns = [], row
                   if (col.key === 'drs_converted') {
                     return <td key={col.key}><Badge text={val ?? '—'} variant={drsBadgeVariant(val, 'j')} /></td>
                   }
+                  if (col.key === 'pct_listed' && val !== null && val !== undefined) {
+                    return <td key={col.key}>{val}%</td>
+                  }
                   return <td key={col.key}>{val !== null && val !== undefined ? val : '—'}</td>
                 })}
               </tr>

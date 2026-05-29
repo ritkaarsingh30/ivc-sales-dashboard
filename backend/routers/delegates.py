@@ -76,6 +76,7 @@ _EMPTY_MONTH = {
     "orders_eur": 0.0, "ctc_eur": 0.0,
     "ctc_ratio": None, "days_utilization": None,
     "tour_planned": 0, "tour_covered": 0, "tour_coverage_pct": None,
+    "dr_in_list": None, "listed_covered": None, "pct_listed": None,
 }
 
 
@@ -131,6 +132,16 @@ async def get_delegates():
                     m["tour_planned"]      = tp
                     m["tour_covered"]      = tc
                     m["tour_coverage_pct"] = round(tc / tp * 100, 1) if tp > 0 else None
+
+            # Listed DR coverage for this delegate this month
+            if df is not None and not df.empty:
+                del_rows_listed = df[df["Delegate"] == del_id]
+                if not del_rows_listed.empty:
+                    r = del_rows_listed.iloc[0]
+                    pct_raw = r.get("PctDRCovered")
+                    m["dr_in_list"]     = r.get("DrInList")
+                    m["listed_covered"] = r.get("ListedDRCovered")
+                    m["pct_listed"]     = round(float(pct_raw) * 100, 1) if pct_raw is not None else None
 
             months_data[key] = m
 

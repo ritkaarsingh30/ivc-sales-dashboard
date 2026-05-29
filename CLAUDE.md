@@ -81,9 +81,11 @@ Both paths feed the same loader functions in `loaders.py`. The local path passes
 - NaN/Inf floats are globally sanitized to `null` via `NaNSafeJSONResponse` in `main.py`
 
 **Name normalization** (`name_map.py`):
-- `normalize_mr()` / `mr_display_name()` — fuzzy-matches delegate names to canonical IDs (`MR_001`–`MR_006`, `AGT_001`)
+- `normalize_mr()` / `mr_display_name()` — fuzzy-matches delegate names to canonical IDs (`MR_001`–`MR_006`, `MR_019`, `AGT_001`)
+- Auto-delegate registry: unknown delegates are assigned a new `MR_XXX` ID at runtime via `_next_mr_id()` and persisted to `delegate_registry.json` next to `name_map.py`
 - `normalize_product()` / `product_display_name()` — canonicalizes product names
 - `normalize_activity()` / `normalize_doctor()` / `normalize_territory()` — same pattern
+- Territory normalization uses `TERRITORY_OVERRIDES` (exact + fuzzy, threshold 75) → `TERRITORY_CANONICAL` display names; unmatched raw values fall back to title-cased string (not `"UNKNOWN"`) so they remain visible in the UI
 - `build_doctor_index()` — must be called after loading data to enable doctor fuzzy matching
 
 **Routers** (`routers/`): 7 routers — `overview`, `months`, `products`, `delegates`, `expenses`, `activities`, `insights`. Each checks Redis cache first, computes, stores, then returns. Pattern is consistent across all routers.
@@ -101,11 +103,13 @@ Both paths feed the same loader functions in `loaders.py`. The local path passes
 
 **Data fetching** (`hooks/useDashboard.js`): All API calls go through TanStack Query hooks. The `baseURL` is `/api` — Vite proxies this to `localhost:8000` in dev. `useAvailableMonths()` fetches from `GET /api/health` and returns `months_loaded`.
 
-**Tab structure** (`App.jsx`): Tabs are dynamic — static tabs `ov`, `prod`, `del`, `exp`, `act` are always present; month tabs are inserted between `ov` and `prod` based on `useAvailableMonths()`. Only the active tab renders. Month tabs render `<MonthTab month={key} />`.
+**Tab structure** (`App.jsx`): Tabs are dynamic — static tabs `ov`, `prod`, `del`, `exp`, `act`, `nom` are always present; month tabs are inserted between `ov` and `prod` based on `useAvailableMonths()`. Only the active tab renders. Month tabs render `<MonthTab month={key} />`. `nom` renders `<NomenclatureTab />` (team glossary). `AGGREGATE_TABS` is a `Set` of the non-month tabs; `<FilterBar />` is shown whenever the active tab is in that set.
+
+**Filter context** (`context/FilterContext.jsx`): `FilterProvider` wraps the entire app and exposes `useFilter()`. Tracks `selectedMonths` (a `Set` or `null` for "all"). `activeMonths` is derived — the subset of `availableMonths` that pass the filter. Resets to "all" whenever `availableMonths` changes.
 
 **Charts**: All charts use Chart.js 4 via `react-chartjs-2`. Reusable config helpers in `utils/chartConfig.js`. Month-specific config (colors, labels) in `utils/monthConfig.js`.
 
-**Components** (`components/`): `KpiCard`, `ChartCard`, `DataTable`, `InsightBox`, `Badge`, `SectionLabel`, `TabBar`, `SalesOutcomeCell`, `TourPlanSection`, `VisitTrackerSection` — all purely presentational.
+**Components** (`components/`): `KpiCard`, `ChartCard`, `DataTable`, `InsightBox`, `Badge`, `SectionLabel`, `TabBar`, `SalesOutcomeCell`, `TourPlanSection`, `VisitTrackerSection`, `FilterBar` — all purely presentational.
 
 ### Data files (`IVC/`)
 

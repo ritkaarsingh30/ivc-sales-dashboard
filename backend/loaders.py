@@ -39,6 +39,30 @@ def _norm_hdr(val) -> str:
     return re.sub(r'\s+', ' ', str(val).strip()).lower()
 
 
+def _parse_pct_cell(val) -> "float | None":
+    """Parse a percentage cell that may be a raw decimal (0.37) or a formatted string (37.17%)."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        v = val.strip()
+        if not v or v.lower() == 'nan':
+            return None
+        if v.endswith('%'):
+            try:
+                return float(v[:-1]) / 100.0
+            except ValueError:
+                return None
+        try:
+            return float(v) or None
+        except ValueError:
+            return None
+    try:
+        f = float(val)
+        return None if pd.isna(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_header(df: pd.DataFrame, header_row_idx: int) -> dict:
     """Return {normalized_header: column_label} for every non-NaN cell in the header row."""
     result = {}
@@ -734,6 +758,9 @@ def load_monthly_reports(file_bytes: bytes = None, df: pd.DataFrame = None,
         avg_col       = _find_col(cols, "avg calls\nper day", "avg calls per day")
         orders_col    = _find_col(cols, "total orders\n(eur)", "total orders (eur)", "total orders")
         ctc_col       = _find_col(cols, "ctc\n(eur)", "ctc (eur)", "ctc")
+        dr_list_col    = _find_col(cols, "dr in list")
+        listed_cov_col = _find_col(cols, "listed dr covered")
+        pct_cov_col    = _find_col(cols, "% dr covered as per list")
 
         del_rows = []
         for i, row in raw_d.iterrows():
@@ -763,6 +790,9 @@ def load_monthly_reports(file_bytes: bytes = None, df: pd.DataFrame = None,
                 "AvgCallsPerDay":safe_num(row.iloc[avg_col])       if avg_col      is not None else 0.0,
                 "TotalOrders":   safe_num(row.iloc[orders_col])    if orders_col   is not None else 0.0,
                 "CTC":           safe_num(row.iloc[ctc_col])       if ctc_col      is not None else 0.0,
+                "DrInList":      int(safe_num(row.iloc[dr_list_col]))    if dr_list_col    is not None and not pd.isna(row.iloc[dr_list_col])    else None,
+                "ListedDRCovered": int(safe_num(row.iloc[listed_cov_col])) if listed_cov_col is not None and not pd.isna(row.iloc[listed_cov_col]) else None,
+                "PctDRCovered":  _parse_pct_cell(row.iloc[pct_cov_col]) if pct_cov_col is not None else None,
             })
         del_df = pd.DataFrame(del_rows)
 
@@ -1042,14 +1072,14 @@ def load_tour_plan(file_bytes: bytes = None, df: pd.DataFrame = None) -> pd.Data
 # Month folder auto-discovery helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-_MONTH_ORDER   = {"jan": 0, "feb": 1, "mar": 2}
-_SALES_TAB     = {"jan": "JAN-26", "feb": "FEB-26", "mar": "MAR-26"}
-_PREV_SALES_TAB = {"jan": None,    "feb": "JAN-26", "mar": "FEB-26"}
+_MONTH_ORDER   = {"jan": 0, "feb": 1, "mar": 2, "apr": 3}
+_SALES_TAB     = {"jan": "JAN-26", "feb": "FEB-26", "mar": "MAR-26", "apr": "APR-26"}
+_PREV_SALES_TAB = {"jan": None,    "feb": "JAN-26", "mar": "FEB-26", "apr": "MAR-26"}
 
 
 def _folder_to_month_key(name: str) -> "str | None":
     n = name.strip().lower()
-    for key in ("jan", "feb", "mar"):
+    for key in ("jan", "feb", "mar", "apr"):
         if n.startswith(key):
             return key
     return None

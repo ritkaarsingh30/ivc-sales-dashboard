@@ -172,6 +172,9 @@ async def get_month(month: str):
                 "orders_eur": round(total_orders, 2) if total_orders else None,
                 "ctc_eur": round(ctc, 2) if ctc else None,
                 "ctc_ratio": ctc_ratio,
+                "dr_in_list":     row.get("DrInList"),
+                "listed_covered": row.get("ListedDRCovered"),
+                "pct_listed":     round(float(row["PctDRCovered"]) * 100, 1) if row.get("PctDRCovered") is not None else None,
             })
 
     distributor_sales = []
