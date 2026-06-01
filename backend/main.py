@@ -129,6 +129,7 @@ async def lifespan(app: FastAPI):
             all_cached = False
             cache_results = [None] * len(all_endpoints)
 
+        app_state.setdefault("annual_projections", {})
         print("[startup] Loading data from Google Drive…")
         existing = app_state.get("data", {})
         data = await load_all_from_sheets(storage, existing_data=existing)
@@ -148,13 +149,20 @@ async def lifespan(app: FastAPI):
 
     else:
         # Local mode
-        from loaders import load_all_data
+        from loaders import load_all_data, load_annual_projections, _find_root_file
         from cache.redis_client import health_check, build_sheet_dependencies
 
         print("Loading all IVC data files locally…")
         data = load_all_data(storage)
         app_state["data"] = data
         _build_doctor_index_from_data(data)
+
+        sales_bytes = _find_root_file(storage, "sales")
+        if sales_bytes:
+            app_state["annual_projections"] = load_annual_projections(sales_bytes)
+            print(f"[startup] Annual projections loaded for {len(app_state['annual_projections'])} products")
+        else:
+            app_state["annual_projections"] = {}
 
         # For local mode, derive month keys from what was loaded
         month_keys = list(data.keys())

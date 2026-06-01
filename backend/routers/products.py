@@ -28,7 +28,7 @@ async def get_products():
 
     data = _get_data()
 
-    month_keys = list(data.keys())  # dynamic
+    month_keys = [k for k in data.keys() if not k.startswith('_')]
 
     # Collect all products
     all_products = set()
@@ -38,7 +38,7 @@ async def get_products():
         if s is not None and not s.empty:
             all_products.update(s["Product"].tolist())
 
-    # Q1 trend per product
+    # Trend per product (one entry per product, one key per loaded month)
     q1_trend = []
     for prod in sorted(all_products):
         entry = {"product": prod}
@@ -52,43 +52,23 @@ async def get_products():
                 entry[key] = 0
         q1_trend.append(entry)
 
-    # Annual vs Q1 — use Jan projection as proxy for annual (or sum of all month projections)
-    annual_map = {}
-    for key in month_keys:
-        d = data.get(key, {})
-        proj = d.get("projection", {})
-        if proj:
-            proj_df = proj.get("projection")
-            if proj_df is not None and not proj_df.empty:
-                for _, row in proj_df.iterrows():
-                    prod = row["Product"]
-                    # Annual is typically 3x quarterly projection; use what we have
-                    if prod not in annual_map:
-                        annual_map[prod] = {"annual_target": 0, "q1_achieved": 0}
-                    annual_map[prod]["annual_target"] += round(float(row.get("Target_Value_EUR", 0)), 2)
+    # YTD achieved per product
+    product_ytd = {t["product"]: round(sum(t.get(k, 0) for k in month_keys), 2) for t in q1_trend}
 
-    # Fill Q1 achieved
-    for key in month_keys:
-        d = data.get(key, {})
-        s = d.get("sales", {}).get("current")
-        if s is not None and not s.empty:
-            for prod, vals in annual_map.items():
-                row = s[s["Product"] == prod]
-                if not row.empty:
-                    annual_map[prod]["q1_achieved"] = annual_map[prod].get("q1_achieved", 0) + round(float(row["TOTAL_VALUE_EUR"].sum()), 2)
+    # Annual targets from ANNUAL PROJECTIONS sheet (keyed by display name)
+    from main import app_state
+    annual_proj = app_state.get("annual_projections", {})
 
+    # Build annual_vs_q1 (named for backwards compat; contains YTD data)
+    all_prods = set(product_ytd)
     annual_vs_q1 = []
-    for prod, vals in annual_map.items():
-        at = vals["annual_target"]
-        ach = vals["q1_achieved"]
-        pct = round(ach / at * 100, 1) if at > 0 else None
+    for prod in all_prods:
         annual_vs_q1.append({
-            "product": prod,
-            "annual_target": round(at, 2),
-            "q1_achieved": round(ach, 2),
-            "pct": pct,
+            "product":       prod,
+            "annual_target": annual_proj.get(prod),  # None if sheet not loaded
+            "ytd_achieved":  product_ytd.get(prod, 0),
         })
-    annual_vs_q1 = sorted(annual_vs_q1, key=lambda x: x["q1_achieved"], reverse=True)
+    annual_vs_q1 = sorted(annual_vs_q1, key=lambda x: x["ytd_achieved"], reverse=True)
 
     # Category mix per month
     category_mix = {}

@@ -1072,15 +1072,32 @@ def load_tour_plan(file_bytes: bytes = None, df: pd.DataFrame = None) -> pd.Data
 # Month folder auto-discovery helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-_MONTH_ORDER   = {"jan": 0, "feb": 1, "mar": 2, "apr": 3}
-_SALES_TAB     = {"jan": "JAN-26", "feb": "FEB-26", "mar": "MAR-26", "apr": "APR-26"}
-_PREV_SALES_TAB = {"jan": None,    "feb": "JAN-26", "mar": "FEB-26", "apr": "MAR-26"}
+_ALL_MONTH_KEYS = ["jan", "feb", "mar", "apr", "may", "jun",
+                   "jul", "aug", "sep", "oct", "nov", "dec"]
+_MONTH_ORDER   = {k: i for i, k in enumerate(_ALL_MONTH_KEYS)}
+_SALES_TAB     = {k: f"{k.upper()}-26" for k in _ALL_MONTH_KEYS}
+_PREV_SALES_TAB = {k: (_SALES_TAB[_ALL_MONTH_KEYS[i - 1]] if i > 0 else None)
+                   for i, k in enumerate(_ALL_MONTH_KEYS)}
+_MONTH_ABBR_TO_KEY = {
+    "jan": "jan", "january": "jan",
+    "feb": "feb", "february": "feb",
+    "mar": "mar", "march": "mar",
+    "apr": "apr", "april": "apr",
+    "may": "may",
+    "jun": "jun", "june": "jun",
+    "jul": "jul", "july": "jul",
+    "aug": "aug", "august": "aug",
+    "sep": "sep", "sept": "sep", "september": "sep",
+    "oct": "oct", "october": "oct",
+    "nov": "nov", "november": "nov",
+    "dec": "dec", "december": "dec",
+}
 
 
 def _folder_to_month_key(name: str) -> "str | None":
     n = name.strip().lower()
-    for key in ("jan", "feb", "mar", "apr"):
-        if n.startswith(key):
+    for abbr, key in _MONTH_ABBR_TO_KEY.items():
+        if n.startswith(abbr):
             return key
     return None
 
@@ -1149,6 +1166,103 @@ def _find_root_file(storage, keyword: str) -> "bytes | None":
             except Exception as exc:
                 logger.warning(f"[loaders] Cannot read root file {f}: {exc}")
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANNUAL PROJECTIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def load_annual_projections(file_bytes: bytes = None, df: pd.DataFrame = None) -> dict:
+    """
+    Reads ANNUAL PROJECTIONS data. Accepts either:
+      - file_bytes: raw Excel bytes (local mode) — reads 'ANNUAL PROJECTIONS' sheet
+      - df: pre-fetched DataFrame from Google Sheets (sheets mode) — first row is headers
+    Returns {product_display_name: annual_eur} — sum of Jan–Dec 2026 columns only.
+    """
+    import re as _re
+    result = {}
+
+    if df is not None:
+        # Sheets mode: df from batchGet — row 0 is the header row (all strings)
+        try:
+            if df.empty or len(df) < 2:
+                return result
+            headers = df.iloc[0].tolist()
+            # Map column index → 'jan'/'feb'/... for 2026 headers ("Jan-26", "FEB-26", etc.)
+            col_to_key: dict[int, str] = {}
+            for i, h in enumerate(headers):
+                if not h or str(h).strip() == "":
+                    continue
+                m = _re.match(r'^([A-Za-z]{3})-(\d{2,4})$', str(h).strip())
+                if not m:
+                    continue
+                abbr = m.group(1).lower()
+                yr_s = m.group(2)
+                year = int(yr_s) if len(yr_s) == 4 else 2000 + int(yr_s)
+                if year == 2026 and abbr in _MONTH_ABBR_TO_KEY:
+                    col_to_key[i] = _MONTH_ABBR_TO_KEY[abbr]
+            if not col_to_key:
+                logger.warning("[loaders] annual_proj (sheets): no 2026 month columns found")
+                return result
+            for _, row in df.iloc[1:].iterrows():
+                raw_name = str(row.iloc[0]).strip()
+                if not raw_name or raw_name.upper() in ("PRODUCT", "NAN", ""):
+                    continue
+                pid = normalize_product(raw_name)
+                if pid in ("UNKNOWN", "EXCLUDED") or pid is None:
+                    logger.debug(f"[loaders] annual_proj (sheets): unrecognized {raw_name!r}")
+                    continue
+                total = 0.0
+                for i in col_to_key:
+                    try:
+                        v = row.iloc[i]
+                        if v and str(v).strip() not in ("", "nan"):
+                            total += float(str(v).replace(",", "").replace("€", ""))
+                    except (ValueError, TypeError):
+                        pass
+                display = product_display_name(pid)
+                result[display] = round(total, 2)
+        except Exception as exc:
+            logger.warning(f"[loaders] load_annual_projections (sheets) failed: {exc}")
+        return result
+
+    # Local mode: read directly from Excel bytes via openpyxl
+    import openpyxl
+    from datetime import datetime as _dt
+    try:
+        wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+        if "ANNUAL PROJECTIONS" not in wb.sheetnames:
+            logger.warning("[loaders] 'ANNUAL PROJECTIONS' sheet not found in Sales file")
+            return result
+        ws = wb["ANNUAL PROJECTIONS"]
+        headers = [cell.value for cell in ws[1]]
+        # Map column index → month key for 2026 datetime headers
+        col_to_key: dict[int, str] = {}
+        for i, h in enumerate(headers):
+            if isinstance(h, _dt) and h.year == 2026:
+                abbr = h.strftime("%b").lower()
+                if abbr in _MONTH_ABBR_TO_KEY:
+                    col_to_key[i] = _MONTH_ABBR_TO_KEY[abbr]
+        if not col_to_key:
+            logger.warning("[loaders] annual_proj (local): no 2026 month columns found")
+            return result
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            raw_name = row[0]
+            if not raw_name or str(raw_name).strip().upper() in ("PRODUCT", "NAN", ""):
+                continue
+            pid = normalize_product(str(raw_name))
+            if pid in ("UNKNOWN", "EXCLUDED") or pid is None:
+                logger.debug(f"[loaders] annual_proj (local): unrecognized {raw_name!r}")
+                continue
+            total = sum(
+                float(row[i]) for i in col_to_key
+                if i < len(row) and row[i] is not None
+            )
+            display = product_display_name(pid)
+            result[display] = round(total, 2)
+    except Exception as exc:
+        logger.warning(f"[loaders] load_annual_projections (local) failed: {exc}")
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────

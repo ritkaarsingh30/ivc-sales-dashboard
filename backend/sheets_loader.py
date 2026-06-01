@@ -323,10 +323,11 @@ async def load_all_from_sheets(storage: SheetStorage, existing_data: dict = None
     data: dict = {}
 
 
-    # ── Sales file: all month tabs in ONE batchGet call ───────────────────────
+    # ── Sales file: all month tabs + ANNUAL PROJECTIONS in ONE batchGet call ───
     all_sales_tabs = list(dict.fromkeys(
         [m["sales_tab"] for m in MONTHS]
         + [m["prev_sales_tab"] for m in MONTHS if m["prev_sales_tab"]]
+        + ["ANNUAL PROJECTIONS"]
     ))
     sales_id = storage.sheet_id("SHEET_SALES")
     sales_dfs, sales_mod, sales_cached = await _open_and_batch_fetch(
@@ -336,6 +337,16 @@ async def load_all_from_sheets(storage: SheetStorage, existing_data: dict = None
     # Persist cache metadata for sales sheet
     if not sales_cached and sales_mod and sales_dfs:
         await set_sheet_metadata(sales_id, datetime.utcnow().isoformat(), sales_mod)
+
+    # Load annual projections from the ANNUAL PROJECTIONS tab
+    from loaders import load_annual_projections
+    from main import app_state
+    ann_proj_df = sales_dfs.get("ANNUAL PROJECTIONS") if sales_dfs else None
+    if ann_proj_df is not None and not ann_proj_df.empty:
+        app_state["annual_projections"] = load_annual_projections(df=ann_proj_df)
+        print(f"[sheets_loader] Annual projections loaded for {len(app_state['annual_projections'])} products")
+    elif not sales_cached:
+        app_state.setdefault("annual_projections", {})
 
     # ── Per-month data ─────────────────────────────────────────────────────────
     for m in MONTHS:
@@ -493,6 +504,7 @@ async def refresh_changed_from_sheets(
         all_sales_tabs = list(dict.fromkeys(
             [m["sales_tab"] for m in MONTHS]
             + [m["prev_sales_tab"] for m in MONTHS if m["prev_sales_tab"]]
+            + ["ANNUAL PROJECTIONS"]
         ))
         def _fetch_sales():
             ss = storage.client.open_by_key(sales_id)
@@ -502,6 +514,12 @@ async def refresh_changed_from_sheets(
             changed_env_keys.append("SHEET_SALES")
             if sales_mod:
                 await set_sheet_metadata(sales_id, datetime.utcnow().isoformat(), sales_mod)
+            # Refresh annual projections
+            from loaders import load_annual_projections
+            from main import app_state
+            ann_df = sales_dfs.get("ANNUAL PROJECTIONS")
+            if ann_df is not None and not ann_df.empty:
+                app_state["annual_projections"] = load_annual_projections(df=ann_df)
         except Exception as exc:
             print(f"[refresh] Failed to fetch sales: {exc}")
             sales_dfs = {}
