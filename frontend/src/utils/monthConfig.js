@@ -47,7 +47,7 @@ export const DELEGATE_COLS = [
   { key: 'pharmacy', label: 'Pharmacy' },
   { key: 'drs_converted', label: 'Drs Conv.' },
   { key: 'days_worked', label: 'Days' },
-  { key: 'avg_calls_day', label: 'Avg Calls/Day' },
+  { key: 'avg_per_day', label: 'Avg Calls/Day' },
   { key: 'orders_eur', label: 'Sales (€)' },
   { key: 'ctc_eur', label: 'CTC (€)' },
   { key: 'ctc_ratio', label: 'CTC Ratio' },
