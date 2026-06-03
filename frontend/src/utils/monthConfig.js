@@ -39,6 +39,9 @@ export const DELEGATE_COLS = [
   { key: 'name', label: 'Delegate' },
   { key: 'territory', label: 'Territory' },
   { key: 'total_calls', label: 'Total Calls' },
+  { key: 'dr_in_list', label: 'Dr in List' },
+  { key: 'listed_covered', label: 'Listed Cov.' },
+  { key: 'pct_listed', label: '% List Cov.' },
   { key: 'prescriber', label: 'Prescriber' },
   { key: 'non_prescriber', label: 'Non-Pres.' },
   { key: 'pharmacy', label: 'Pharmacy' },
@@ -47,9 +50,6 @@ export const DELEGATE_COLS = [
   { key: 'orders_eur', label: 'Sales (€)' },
   { key: 'ctc_eur', label: 'CTC (€)' },
   { key: 'ctc_ratio', label: 'CTC Ratio' },
-  { key: 'dr_in_list', label: 'Dr in List' },
-  { key: 'listed_covered', label: 'Listed Cov.' },
-  { key: 'pct_listed', label: '% List Cov.' },
 ]
 
 // Shared activity-expense table columns — used by all month tabs
